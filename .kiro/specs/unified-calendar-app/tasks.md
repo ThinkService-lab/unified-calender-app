@@ -145,8 +145,8 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Assert: encrypt then decrypt with same key produces identical preferences
     - **Validates: Requirements 5.6**
 
-- [ ] 6. Implement conflict detection
-  - [ ] 6.1 Implement ConflictDetector service
+- [x] 6. Implement conflict detection
+  - [x] 6.1 Implement ConflictDetector service
     - Implement `detectConflicts(event, allEvents)`: check `startA < endB AND startB < endA` for time overlap
     - Implement `suggestAlternatives(event, allEvents, count)`: find conflict-free slots across all visible calendars
     - Implement `estimateTravelTime(from, to)` for travel-time conflict detection
@@ -154,22 +154,22 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Ensure conflict check completes within 500ms
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
 
-  - [ ]* 6.2 Write property test: Conflict detection correctness
+  - [x]* 6.2 Write property test: Conflict detection correctness
     - **Property 7: Conflict detection correctness**
     - Assert: overlap reported iff `startA < endB AND startB < endA`
     - **Validates: Requirements 7.1**
 
-  - [ ]* 6.3 Write property test: Alternative slot suggestions are conflict-free
+  - [x]* 6.3 Write property test: Alternative slot suggestions are conflict-free
     - **Property 8: Alternative slot suggestions are conflict-free**
     - Assert: every suggested slot has zero overlap with existing events
     - **Validates: Requirements 7.3**
 
-  - [ ]* 6.4 Write property test: Travel time conflict detection
+  - [x]* 6.4 Write property test: Travel time conflict detection
     - **Property 9: Travel time conflict detection**
     - Assert: travel-time conflict reported when gap < estimated travel time
     - **Validates: Requirements 7.4**
 
-  - [ ]* 6.5 Write property test: Continuous conflict scanning timing
+  - [x]* 6.5 Write property test: Continuous conflict scanning timing
     - **Property 28: Continuous conflict scanning detects new conflicts within 60 seconds**
     - Assert: `onConflictDetected` fires within 60s of sync completing for overlapping events
     - **Validates: Requirements 7.6**
