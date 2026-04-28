@@ -228,8 +228,8 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Assert: providers without push are polled at intervals ≤ 5 minutes
     - **Validates: Requirements 4.4**
 
-- [ ] 8. Implement sync engine
-  - [ ] 8.1 Implement SyncEngine state machine
+- [x] 8. Implement sync engine
+  - [x] 8.1 Implement SyncEngine state machine
     - Implement state machine: Idle → SyncingOutbound / SyncingInbound / FullSync → ConflictResolution / RetryQueue → Idle
     - Implement `queueLocalChange(change)` writing to `sync_queue` table
     - Implement `processOutboundQueue()` pushing pending changes to providers via adapters
@@ -241,13 +241,13 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Synchronize all queued changes within 60 seconds of network restoration
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.6, 6.3_
 
-  - [ ] 8.2 Implement conflict resolution
+  - [x] 8.2 Implement conflict resolution
     - Detect conflicts when same event modified locally and remotely with different content
     - Present both versions to user for manual resolution (never auto-resolve)
     - Implement `getConflicts()` and `resolveConflict(conflictId, resolution)`
     - _Requirements: 4.5, 6.5_
 
-  - [ ] 8.3 Implement rate limiting and retry logic
+  - [x] 8.3 Implement rate limiting and retry logic
     - Enforce per-provider rate limits from design (Google, Microsoft, CalDAV)
     - Handle 429 responses: pause requests, respect `Retry-After` header
     - Implement exponential backoff with jitter (max 5 retries, 1s initial, 60s max, 2x multiplier, 0.1 jitter)
@@ -256,17 +256,17 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Increase polling intervals for persistently rate-limited providers
     - _Requirements: 18.1, 18.2, 18.3, 18.4, 18.5, 18.6_
 
-  - [ ]* 8.4 Write property test: Failed write operations are queued
+  - [x]* 8.4 Write property test: Failed write operations are queued
     - **Property 15: Failed write operations are queued**
     - Assert: failed write creates exactly one SyncQueueEntry with status pending, retryCount 0
     - **Validates: Requirements 3.6**
 
-  - [ ]* 8.5 Write property test: Sync conflict detection preserves both versions
+  - [x]* 8.5 Write property test: Sync conflict detection preserves both versions
     - **Property 16: Sync conflict detection preserves both versions**
     - Assert: conflict object contains both local and remote versions
     - **Validates: Requirements 4.5, 6.5**
 
-  - [ ]* 8.6 Write property test: Offline CRUD and sync queue consistency
+  - [x]* 8.6 Write property test: Offline CRUD and sync queue consistency
     - **Property 19: Offline CRUD operations and sync queue consistency**
     - Assert: offline CRUD reflects locally immediately, sync queue has exactly one matching entry
     - **Validates: Requirements 6.1, 6.2**
