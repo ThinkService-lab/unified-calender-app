@@ -6,8 +6,8 @@ This plan implements the Unified Calendar App in dependency order: foundational 
 
 ## Tasks
 
-- [ ] 1. Initialize Expo project and configure core infrastructure
-  - [ ] 1.1 Scaffold Expo project with TypeScript, install core dependencies
+- [x] 1. Initialize Expo project and configure core infrastructure
+  - [x] 1.1 Scaffold Expo project with TypeScript, install core dependencies
     - Initialize Expo project with TypeScript template
     - Install: `zustand`, `immer`, `@tanstack/react-query`, `op-sqlite` (mobile), `sql.js` (web), `axios`, `fast-check` (dev), `jest` (dev)
     - Configure platform-specific file extensions (`.web.ts`, `.ios.ts`, `.android.ts`) in Metro/webpack
@@ -15,13 +15,13 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Configure Jest with fast-check support
     - _Requirements: 9.1, 9.2_
 
-  - [ ] 1.2 Create TypeScript type definitions for all data models
+  - [x] 1.2 Create TypeScript type definitions for all data models
     - Define all interfaces from design: `CalendarAccount`, `CalendarEvent`, `Organizer`, `RecurrenceRule`, `Attendee`, `SyncQueueEntry`, `UserSubscription`, `SharedCalendarView`, `SharedViewMember`, `DelegationGrant`, `SchedulingPreferences`, `LearnedPattern`, `AuthEvent`, `DeletionReceipt`, `OnboardingState`, `EncryptedPreferences`
     - Define type aliases: `ProviderId`, `VisibilityLevel`, `SubscriptionTier`, `Feature`, `OnboardingStep`, `TokenHealthStatus`
     - Define interface contracts: `ParseResult<T>`, `ParseError`, `Conflict`, `TimeSlot`, `SlotSuggestion`, `Audience`, `RetryPolicy`, `FreeBusySlot`, `MeetingRequest`, `TimeBlock`
     - _Requirements: 2.1, 3.1, 5.1, 12.1, 12.2_
 
-  - [ ] 1.3 Implement SQLite schema and database initialization
+  - [x] 1.3 Implement SQLite schema and database initialization
     - Create platform-specific SQLite driver module (`db.ios.ts`, `db.android.ts`, `db.web.ts`) wrapping `op-sqlite` / `sql.js`
     - Implement schema creation with all tables from design: `calendar_accounts`, `events`, `sync_queue`, `user_subscription`, `privacy_preferences`, `event_visibility_overrides`, `scheduling_preferences`, `auth_events`, `onboarding_state`
     - Create all indexes: `idx_events_calendar`, `idx_events_time`, `idx_events_sync`, `idx_events_provider_id`, `idx_auth_events_user`
@@ -30,14 +30,14 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Implement AES-256-GCM encryption wrapper for database at rest
     - _Requirements: 6.1, 6.4, 6.6, 13.2, 17.1_
 
-  - [ ] 1.4 Implement database migration framework
+  - [x] 1.4 Implement database migration framework
     - Create migration runner that detects schema version mismatch on launch
     - Implement forward-only migration execution with pre-migration backup
     - Implement read-only fallback mode on migration failure with user notification
     - _Requirements: 17.1, 17.2, 17.3, 17.4, 17.6_
 
-- [ ] 2. Implement iCalendar parser and serializer (RFC 5545)
-  - [ ] 2.1 Implement EventSerializer
+- [x] 2. Implement iCalendar parser and serializer (RFC 5545)
+  - [x] 2.1 Implement EventSerializer
     - Implement `serialize(event: CalendarEvent): string` producing valid RFC 5545 iCalendar output
     - Handle line folding (75 octet limit), text escaping (`\\`, `\;`, `\,`, `\n`)
     - Serialize all fields: DTSTART/DTEND as UTC, RRULE with full BYxxx support, ATTENDEE, ORGANIZER, SEQUENCE, DTSTAMP
@@ -45,7 +45,7 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Implement `serializeComponent(vevent: VEvent): string`
     - _Requirements: 12.2_
 
-  - [ ] 2.2 Implement EventParser
+  - [x] 2.2 Implement EventParser
     - Implement `parse(icsData: string): ParseResult<CalendarEvent>` consuming RFC 5545 iCalendar data
     - Implement line unfolding before parsing
     - Parse VTIMEZONE components and convert all times to UTC
@@ -80,8 +80,8 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Assert: parsed startTime/endTime are UTC values representing the same instant
     - **Validates: Requirements 12.6**
 
-- [ ] 3. Implement recurrence rule engine
-  - [ ] 3.1 Implement recurrence rule expansion
+- [x] 3. Implement recurrence rule engine
+  - [x] 3.1 Implement recurrence rule expansion
     - Create `expandRecurrenceRule(rule: RecurrenceRule, start: Date, range: DateRange): Date[]`
     - Support all frequencies: daily, weekly, monthly, yearly with interval
     - Implement full BYxxx evaluation in RFC 5545 order: BYMONTH → BYWEEKNO → BYYEARDAY → BYMONTHDAY → BYDAY → BYHOUR → BYMINUTE → BYSECOND → BYSETPOS
@@ -90,7 +90,7 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Silently skip invalid dates (e.g., Feb 30)
     - _Requirements: 3.4, 3.5_
 
-  - [ ] 3.2 Implement recurring event exception handling
+  - [x] 3.2 Implement recurring event exception handling
     - Create logic to modify a single instance of a recurring event by creating an exception
     - Store exception with `recurrenceExceptionDate` and `parentRecurringEventId`
     - Ensure other occurrences remain unmodified
@@ -107,7 +107,7 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Assert: modifying one instance leaves all other occurrences unchanged
     - **Validates: Requirements 3.5**
 
-- [ ] 4. Checkpoint - Validate foundational layers
+- [x] 4. Checkpoint - Validate foundational layers
   - Ensure all tests pass for data models, SQLite schema, iCalendar parser/serializer, and recurrence engine
   - Verify round-trip property tests pass with minimum 100 iterations
   - Ask the user if questions arise
