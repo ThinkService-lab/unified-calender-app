@@ -271,13 +271,13 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Assert: offline CRUD reflects locally immediately, sync queue has exactly one matching entry
     - **Validates: Requirements 6.1, 6.2**
 
-- [ ] 9. Checkpoint - Validate sync and provider layers
+- [x] 9. Checkpoint - Validate sync and provider layers
   - Ensure all tests pass for provider adapters, sync engine, privacy layer, and conflict detection
   - Verify property tests for sync queue, conflict detection, and privacy filtering pass
   - Ask the user if questions arise
 
-- [ ] 10. Implement Zustand stores and TanStack Query integration
-  - [ ] 10.1 Implement Zustand stores with middleware stack
+- [x] 10. Implement Zustand stores and TanStack Query integration
+  - [x] 10.1 Implement Zustand stores with middleware stack
     - Create calendar accounts store with `persist` (SQLite-backed custom storage adapter) + `immer` + `devtools` middleware
     - Create events store with time-range queries and sync status tracking
     - Create sync status store using `zustand/vanilla` for non-React sync engine context
@@ -286,7 +286,7 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Use transient updates (`subscribe` + `useRef`) for high-frequency sync status
     - _Requirements: 2.1, 6.1_
 
-  - [ ] 10.2 Configure TanStack Query for server-state management
+  - [x] 10.2 Configure TanStack Query for server-state management
     - Set up `QueryClient` with appropriate `staleTime` and `gcTime` per query type
     - Create query hooks for provider API calls: `useCalendars(accountId)`, `useEvents(accountId, range)`
     - Create mutation hooks: `useCreateEvent`, `useUpdateEvent`, `useDeleteEvent` with optimistic updates
@@ -294,15 +294,15 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Configure `onlineManager` for offline-aware query behavior
     - _Requirements: 4.1, 4.2_
 
-- [ ] 11. Implement subscription and payment management
-  - [ ] 11.1 Implement SubscriptionManager
+- [x] 11. Implement subscription and payment management
+  - [x] 11.1 Implement SubscriptionManager
     - Implement `getCurrentTier(userId)`, `checkFeatureAccess(userId, feature)`, `validateReceipt(receipt)`
     - Implement tier enforcement: Free (3 accounts, basic view), Pro (unlimited, AI, conflicts, privacy), Team (shared views, delegation)
     - Implement `handleDowngrade(userId, newTier)`: retain data, disable excess features at billing period end
     - Implement `getGracePeriodEnd(userId)`: 7-day grace period on payment failure
     - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.6_
 
-  - [ ] 11.2 Implement platform payment integration
+  - [x] 11.2 Implement platform payment integration
     - Mobile: Integrate RevenueCat SDK wrapping Apple StoreKit + Google Play Billing
     - Web: Integrate Stripe Checkout + Stripe Billing
     - Map tiers to RevenueCat entitlements: `pro`, `team`
@@ -310,7 +310,7 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Unlock features within 10 seconds of payment confirmation
     - _Requirements: 10.2, 10.3, 10.5_
 
-  - [ ] 11.3 Implement account limit enforcement
+  - [x] 11.3 Implement account limit enforcement
     - Block connecting more than 3 accounts on Free tier with upgrade prompt
     - On downgrade, make excess accounts read-only (do not delete)
     - _Requirements: 1.3, 10.1, 10.4_

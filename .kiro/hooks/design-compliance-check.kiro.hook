@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "Design Spec Compliance Check",
+  "description": "After each spec task completes, automatically reviews the implementation against the design specification, requirements document, and steering rules to identify gaps before the user needs to ask.",
+  "version": "1",
+  "when": {
+    "type": "postTaskExecution"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A spec task just completed. Before reporting success to the user, do a thorough design compliance review:\n\n1. Read the design doc (.kiro/specs/unified-calendar-app/design.md) and requirements doc (.kiro/specs/unified-calendar-app/requirements.md)\n2. Read all source files that were created or modified by this task\n3. Cross-reference each task requirement bullet point against the actual implementation\n4. Check for these common gap patterns:\n   - Functions that are stubbed or return trivial values (no-ops)\n   - Missing middleware that the design doc specifies (persist, immer, devtools)\n   - Offline-first violations: operations that should work offline but depend on network success callbacks\n   - State that should survive app restarts but isn't persisted\n   - Grace period / time-based logic that doesn't actually check dates\n   - Query hooks that fetch data but don't populate the local store\n   - Missing networkMode: 'offlineFirst' on mutations in an offline-first architecture\n5. Check steering rules in .kiro/steering/ for any best practices that weren't followed\n6. If you find gaps, list them with severity (High/Medium/Low) and fix them immediately\n7. If no gaps found, confirm the implementation is fully compliant\n\nDo NOT skip this review. Do NOT just say \"looks good\" without actually reading the files."
+  }
+}

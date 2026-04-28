@@ -93,6 +93,17 @@ function arbVersionPair(): fc.Arbitrary<{ local: string; remote: string }> {
 
 // ── Property Tests ──
 
+// Use fake timers to prevent open handles from the SyncEngine's internal
+// setTimeout / setInterval calls (outbound processing, retry, polling).
+beforeEach(() => {
+  jest.useFakeTimers();
+});
+
+afterEach(() => {
+  jest.runOnlyPendingTimers();
+  jest.useRealTimers();
+});
+
 // Feature: unified-calendar-app, Property 15: Failed write operations are queued
 // **Validates: Requirements 3.6**
 describe('Property 15: Failed write operations are queued', () => {
@@ -114,8 +125,8 @@ describe('Property 15: Failed write operations are queued', () => {
         // Queue the change — this inserts into sync_queue
         engine.queueLocalChange(change);
 
-        // Allow the async insert to complete (mock db is instant, minimal wait)
-        await new Promise((r) => setTimeout(r, 10));
+        // Flush the microtask queue so the async db.execute() resolves
+        await Promise.resolve();
 
         // Find the INSERT call for this change
         const insertCalls = db.executeCalls.filter(
@@ -175,6 +186,9 @@ describe('Property 16: Sync conflict detection preserves both versions', () => {
           syncToken: 'tok-0',
         });
 
+        // Flush any pending microtasks
+        await Promise.resolve();
+
         const conflicts = engine.getConflicts();
 
         // A conflict must be detected
@@ -222,8 +236,8 @@ describe('Property 19: Offline CRUD and sync queue consistency', () => {
         // Queue the local change (offline CRUD)
         engine.queueLocalChange(change);
 
-        // Allow the async insert to complete (mock db is instant, minimal wait)
-        await new Promise((r) => setTimeout(r, 10));
+        // Flush the microtask queue so the async db.execute() resolves
+        await Promise.resolve();
 
         // The sync queue must have exactly one INSERT for this change
         const insertCalls = db.executeCalls.filter(
