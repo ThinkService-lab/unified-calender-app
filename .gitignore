@@ -29,6 +29,8 @@ android/
 
 # Testing
 coverage/
+jest-results.json
+test-output.txt
 
 # Logs
 *.log
