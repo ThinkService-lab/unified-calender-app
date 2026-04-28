@@ -112,8 +112,8 @@ This plan implements the Unified Calendar App in dependency order: foundational 
   - Verify round-trip property tests pass with minimum 100 iterations
   - Ask the user if questions arise
 
-- [ ] 5. Implement privacy layer
-  - [ ] 5.1 Implement PrivacyLayer service
+- [x] 5. Implement privacy layer
+  - [x] 5.1 Implement PrivacyLayer service
     - Implement `getVisibility(calendarId)` and `setVisibility(calendarId, level)` backed by `privacy_preferences` table
     - Implement `getEventOverride(eventId)` and `setEventOverride(eventId, level)` backed by `event_visibility_overrides` table
     - Implement `filterForAudience(events, audience)`:
@@ -134,7 +134,7 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Assert: event override always wins over calendar-level setting
     - **Validates: Requirements 5.4**
 
-  - [ ] 5.4 Implement E2E encrypted preference sync
+  - [x] 5.4 Implement E2E encrypted preference sync
     - Implement `UserPreferenceSyncService`: `deriveEncryptionKey`, `pushPreferences`, `pullPreferences`, `syncPreferences`
     - Use AES-256-GCM for encryption/decryption
     - Store encrypted blob server-side (server cannot decrypt)

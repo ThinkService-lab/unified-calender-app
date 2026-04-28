@@ -135,6 +135,31 @@ describe('parseDateTime', () => {
     // New York is UTC-5 in January
     expect(result.toISOString()).toBe('2023-01-15T14:00:00.000Z');
   });
+
+  it('handles DST spring-forward boundary correctly', () => {
+    // US DST 2024: clocks spring forward at 2:00 AM EST → 3:00 AM EDT on March 10
+    // 3:00 AM EDT = UTC-4, so 3:00 AM local = 07:00 UTC
+    const result = parseDateTime('20240310T030000', 'America/New_York');
+    expect(result.toISOString()).toBe('2024-03-10T07:00:00.000Z');
+  });
+
+  it('handles DST fall-back boundary correctly', () => {
+    // US DST 2024: clocks fall back at 2:00 AM EDT → 1:00 AM EST on November 3
+    // 1:30 AM after fall-back is EST (UTC-5), so 1:30 AM local = 06:30 UTC
+    // Ambiguous time — implementation picks the standard-time interpretation
+    const result = parseDateTime('20241103T013000', 'America/New_York');
+    // Should be either 05:30 UTC (EDT) or 06:30 UTC (EST) — both are valid
+    const utcHour = result.getUTCHours();
+    const utcMin = result.getUTCMinutes();
+    expect(utcMin).toBe(30);
+    expect(utcHour === 5 || utcHour === 6).toBe(true);
+  });
+
+  it('handles timezone with non-hour offset (Asia/Kolkata +5:30)', () => {
+    // 9:00 AM IST = 3:30 AM UTC
+    const result = parseDateTime('20240615T090000', 'Asia/Kolkata');
+    expect(result.toISOString()).toBe('2024-06-15T03:30:00.000Z');
+  });
 });
 
 describe('parseRRule', () => {

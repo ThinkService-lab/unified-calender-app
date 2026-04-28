@@ -168,46 +168,66 @@ export function parseDateTime(value: string, tzid?: string): Date {
 /**
  * Converts a local time with timezone to UTC.
  * Uses Intl.DateTimeFormat for well-known IANA timezone IDs.
+ *
+ * Two-pass approach to handle DST boundary edge cases:
+ * Pass 1: Estimate the UTC offset using the target local time interpreted as UTC.
+ * Pass 2: Re-check the offset at the corrected UTC time. If the offset changed
+ *         (because the initial guess landed on the wrong side of a DST transition),
+ *         apply the corrected offset instead.
  */
 function convertTzToUTC(y: number, m: number, d: number, h: number, min: number, s: number, tzid: string): Date {
   try {
-    // Create a date assuming UTC first
-    const utcGuess = new Date(Date.UTC(y, m, d, h, min, s));
+    const targetLocalMs = Date.UTC(y, m, d, h, min, s);
 
-    // Use Intl to find the offset for this timezone at this time
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: tzid,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    });
+    // Pass 1: estimate offset using the target local time as if it were UTC
+    const offset1 = getUtcOffsetMs(new Date(targetLocalMs), tzid);
+    const utcEstimate = new Date(targetLocalMs - offset1);
 
-    // Binary search approach: find the UTC time that when converted to tzid gives us our target local time
-    // Simple approach: get the offset by comparing formatted output
-    const parts = formatter.formatToParts(utcGuess);
-    const getPart = (type: string) => parseInt(parts.find(p => p.type === type)?.value ?? '0', 10);
+    // Pass 2: re-check offset at the estimated UTC time
+    const offset2 = getUtcOffsetMs(utcEstimate, tzid);
 
-    const localY = getPart('year');
-    const localM = getPart('month') - 1;
-    const localD = getPart('day');
-    const localH = getPart('hour') === 24 ? 0 : getPart('hour');
-    const localMin = getPart('minute');
-    const localS = getPart('second');
+    if (offset1 === offset2) {
+      return utcEstimate;
+    }
 
-    const localAsUTC = new Date(Date.UTC(localY, localM, localD, localH, localMin, localS));
-    const offsetMs = localAsUTC.getTime() - utcGuess.getTime();
-
-    // The target local time in UTC is: targetLocal - offset
-    const targetLocalMs = new Date(Date.UTC(y, m, d, h, min, s)).getTime();
-    return new Date(targetLocalMs - offsetMs);
+    // Offsets differ — we crossed a DST boundary. Use the corrected offset.
+    return new Date(targetLocalMs - offset2);
   } catch {
     // If timezone is not recognized, treat as UTC
     return new Date(Date.UTC(y, m, d, h, min, s));
   }
+}
+
+/**
+ * Returns the UTC offset in milliseconds for a given timezone at a specific UTC instant.
+ * Positive means ahead of UTC (e.g., +5:30 for Asia/Kolkata), negative means behind.
+ */
+function getUtcOffsetMs(utcDate: Date, tzid: string): number {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: tzid,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+
+  const parts = formatter.formatToParts(utcDate);
+  const getPart = (type: string) => parseInt(parts.find(p => p.type === type)?.value ?? '0', 10);
+
+  const localH = getPart('hour') === 24 ? 0 : getPart('hour');
+  const localAsUTC = new Date(Date.UTC(
+    getPart('year'),
+    getPart('month') - 1,
+    getPart('day'),
+    localH,
+    getPart('minute'),
+    getPart('second')
+  ));
+
+  return localAsUTC.getTime() - utcDate.getTime();
 }
 
 /**
