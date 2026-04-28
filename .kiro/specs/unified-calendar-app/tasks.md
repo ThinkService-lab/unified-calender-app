@@ -174,8 +174,8 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Assert: `onConflictDetected` fires within 60s of sync completing for overlapping events
     - **Validates: Requirements 7.6**
 
-- [ ] 7. Implement provider adapters and OAuth
-  - [ ] 7.1 Implement CalendarProviderAdapter base and OAuth connector
+- [x] 7. Implement provider adapters and OAuth
+  - [x] 7.1 Implement CalendarProviderAdapter base and OAuth connector
     - Define abstract base implementing `CalendarProviderAdapter` interface
     - Implement OAuth 2.0 flow with PKCE for mobile (`codeVerifier`, `codeChallenge`)
     - Store tokens in platform-specific secure storage (iOS Keychain, Android Keystore, Web Crypto) via platform-specific files
@@ -183,7 +183,7 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Implement `revokeAccess` clearing stored credentials
     - _Requirements: 1.1, 1.2, 1.5, 13.2_
 
-  - [ ] 7.2 Implement Google Calendar adapter
+  - [x] 7.2 Implement Google Calendar adapter
     - Implement `listCalendars`, `listEvents`, `createEvent`, `updateEvent`, `deleteEvent` via Google Calendar REST API
     - Implement `getChanges` using `syncToken` for incremental sync
     - Implement `setupPushNotification` using `events.watch` for webhooks
@@ -192,7 +192,7 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Enforce Google rate limits (quota per 100 seconds per user)
     - _Requirements: 1.1, 4.1, 4.3, 18.1, 18.3_
 
-  - [ ] 7.3 Implement Microsoft Outlook adapter
+  - [x] 7.3 Implement Microsoft Outlook adapter
     - Implement all CalendarProviderAdapter methods via Microsoft Graph API
     - Implement `getChanges` using `deltaLink` for incremental sync
     - Implement `setupPushNotification` using Graph subscriptions (max 4230 min expiry)
@@ -200,30 +200,30 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Enforce Microsoft Graph rate limits (10,000 requests per 10 minutes per app)
     - _Requirements: 1.1, 4.1, 4.3, 18.1, 18.3_
 
-  - [ ] 7.4 Implement CalDAV adapter (iCloud + generic CalDAV)
+  - [x] 7.4 Implement CalDAV adapter (iCloud + generic CalDAV)
     - Implement all CalendarProviderAdapter methods via WebDAV/CalDAV protocol
     - Implement `getChanges` using `sync-token` for incremental sync
     - No push support — polling only at configurable intervals (≤ 5 minutes)
     - _Requirements: 1.1, 4.4_
 
-  - [ ] 7.5 Implement Exchange adapter
+  - [x] 7.5 Implement Exchange adapter
     - Implement all CalendarProviderAdapter methods via EWS or Microsoft Graph
     - Implement push notifications where supported
     - _Requirements: 1.1, 4.3_
 
-  - [ ] 7.6 Implement TokenHealthMonitor
+  - [x] 7.6 Implement TokenHealthMonitor
     - Monitor token validity with lightweight API calls on 30-second intervals
     - Implement `checkTokenHealth(accountId)` returning `valid | expired | revoked | unknown`
     - Fire `onTokenRevoked` callback within 30 seconds of revocation detection
     - Prompt user for re-authentication on revocation
     - _Requirements: 1.4_
 
-  - [ ]* 7.7 Write property test: Token revocation detection timing
+  - [x]* 7.7 Write property test: Token revocation detection timing
     - **Property 26: Token revocation detection within 30 seconds**
     - Assert: `onTokenRevoked` fires within 30s of provider token revocation
     - **Validates: Requirements 1.4**
 
-  - [ ]* 7.8 Write property test: Polling interval compliance
+  - [x]* 7.8 Write property test: Polling interval compliance
     - **Property 32: Polling interval compliance**
     - Assert: providers without push are polled at intervals ≤ 5 minutes
     - **Validates: Requirements 4.4**
