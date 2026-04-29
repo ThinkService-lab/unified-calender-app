@@ -770,6 +770,54 @@ describe('EventCRUDService', () => {
     });
   });
 
+  describe('5-second propagation SLA (Req 3.2, 3.3)', () => {
+    it('should queue sync immediately on create (< 100ms)', async () => {
+      const start = Date.now();
+      await service.createEvent(baseCreateInput);
+      const elapsed = Date.now() - start;
+
+      expect(syncEngine.queueLocalChange).toHaveBeenCalledTimes(1);
+      // The queue call should happen within the same async tick — well under 5 seconds
+      expect(elapsed).toBeLessThan(100);
+    });
+
+    it('should queue sync immediately on update (< 100ms)', async () => {
+      db.queryResults.set('FROM events WHERE id', [
+        {
+          id: 'event-1', provider_event_id: '', calendar_account_id: 'account-1',
+          title: 'Test', description: null, location: null,
+          start_time: Date.now(), end_time: Date.now() + 3600000,
+          time_zone: 'UTC', is_all_day: 0, recurrence_rule: null,
+          recurrence_exception_date: null, parent_recurring_event_id: null,
+          organizer: null, attendees: null, sequence: 0, dtstamp: Date.now(),
+          status: 'confirmed', visibility_override: null, opaque_fields: null,
+          sync_status: 'synced', local_version: 1, remote_etag: null,
+          modified_by: null, created_at: Date.now(), updated_at: Date.now(),
+        },
+      ]);
+
+      const start = Date.now();
+      await service.updateEvent('event-1', { title: 'Updated' });
+      const elapsed = Date.now() - start;
+
+      expect(syncEngine.queueLocalChange).toHaveBeenCalledTimes(1);
+      expect(elapsed).toBeLessThan(100);
+    });
+
+    it('should queue sync immediately on delete (< 100ms)', async () => {
+      db.queryResults.set('FROM events WHERE id', [
+        { id: 'event-1', calendar_account_id: 'account-1' },
+      ]);
+
+      const start = Date.now();
+      await service.deleteEvent('event-1');
+      const elapsed = Date.now() - start;
+
+      expect(syncEngine.queueLocalChange).toHaveBeenCalledTimes(1);
+      expect(elapsed).toBeLessThan(100);
+    });
+  });
+
   describe('Opaque fields support (Gap #4 fix)', () => {
     it('should store opaque_fields in SQLite on create', async () => {
       const opaqueData = '{"X-CUSTOM-PROP":"custom-value"}';

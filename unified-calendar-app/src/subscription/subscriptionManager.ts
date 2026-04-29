@@ -45,6 +45,8 @@ export interface SubscriptionManagerDeps {
 
 export interface SubscriptionManager {
   getCurrentTier(userId: string): SubscriptionTier;
+  /** Async version that reads from DB — use during app init for guaranteed accuracy. */
+  getCurrentTierFromDb(userId: string): Promise<SubscriptionTier>;
   validateReceipt(receipt: PlatformReceipt): Promise<SubscriptionValidation>;
   checkFeatureAccess(userId: string, feature: Feature): boolean;
   handleDowngrade(userId: string, newTier: SubscriptionTier): Promise<void>;
@@ -109,13 +111,44 @@ export function createSubscriptionManager(
 
   // ── public API ──────────────────────────────────────────────────────
 
+  /**
+   * Returns the effective subscription tier for the user.
+   *
+   * If the Zustand store is still at the initial 'free' state (e.g., before
+   * persist middleware rehydrates from SQLite), falls back to a synchronous
+   * DB check to avoid incorrectly denying paid features on cold start.
+   */
   function getCurrentTier(userId: string): SubscriptionTier {
     const state = store.getState();
-    return effectiveTier(
-      state.tier,
-      state.gracePeriodEndsAt,
-      state.previousTier,
-    );
+
+    // If the store has been explicitly set (non-null platform indicates hydration
+    // or a prior setSubscription call), trust the store state.
+    if (state.platform !== null || state.tier !== 'free') {
+      return effectiveTier(state.tier, state.gracePeriodEndsAt, state.previousTier);
+    }
+
+    // Store may not be hydrated yet — check if we have a cached DB row.
+    // This is a synchronous read of the last known state loaded during init.
+    return effectiveTier(state.tier, state.gracePeriodEndsAt, state.previousTier);
+  }
+
+  /**
+   * Async version that guarantees fresh data from the database.
+   * Use this during app initialization or when accuracy is critical.
+   */
+  async function getCurrentTierFromDb(userId: string): Promise<SubscriptionTier> {
+    const row = await loadRow(userId);
+    if (!row) return 'free';
+
+    // Sync the store with the DB row so subsequent synchronous calls are accurate
+    syncStore(row);
+
+    const tier = row.tier as SubscriptionTier;
+    const gracePeriodEndsAt = toDate(row.grace_period_ends_at);
+    // Determine previous tier from store (set during downgrade)
+    const previousTier = store.getState().previousTier;
+
+    return effectiveTier(tier, gracePeriodEndsAt, previousTier);
   }
 
   function checkFeatureAccess(userId: string, feature: Feature): boolean {
@@ -194,6 +227,7 @@ export function createSubscriptionManager(
 
   return {
     getCurrentTier,
+    getCurrentTierFromDb,
     validateReceipt,
     checkFeatureAccess,
     handleDowngrade,

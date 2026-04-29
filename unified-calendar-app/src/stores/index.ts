@@ -3,6 +3,10 @@
  * Requirements: 2.1, 6.1
  */
 
+// Store initialization (must be called at app startup with a DatabaseDriver)
+export { initializeStores, getInitializedStores, resetStoreInitialization } from './initializeStores';
+export type { InitializedStores } from './initializeStores';
+
 // Storage adapter
 export { createSQLiteStorage, ensureKVTable } from './sqliteStorageAdapter';
 

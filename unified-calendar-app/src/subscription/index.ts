@@ -17,3 +17,7 @@ export type { WebhookHandler, WebhookEventPayload, WebhookHandlerDeps } from './
 // Account limit enforcement
 export { createAccountLimitEnforcer } from './accountLimitEnforcer';
 export type { AccountLimitEnforcer, AccountLimitEnforcerDeps, AccountLimitResult } from './accountLimitEnforcer';
+
+// Feature unlock poller (ensures 10-second unlock SLA after payment)
+export { pollForFeatureUnlock, MAX_POLL_DURATION_MS, POLL_INTERVAL_MS } from './featureUnlockPoller';
+export type { FeatureUnlockPollerDeps, FeatureUnlockResult, SubscriptionResponse } from './featureUnlockPoller';

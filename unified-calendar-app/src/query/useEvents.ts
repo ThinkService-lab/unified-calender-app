@@ -2,10 +2,11 @@
  * Query hook for fetching events with date range.
  * Populates the Zustand events store on successful fetch so the local
  * store stays in sync with provider data (Req 2.1, 6.1).
+ * Automatically disables fetching when offline via onlineManager.
  * Requirements: 4.1, 4.2
  */
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, onlineManager } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { queryKeys } from './queryKeys';
 import { STALE_TIMES } from './queryClient';
@@ -63,6 +64,7 @@ function defaultTransform(raw: RawEventData, accountId: string): CalendarEvent {
  * Uses a 10-second staleTime since events change more frequently.
  * Query keys include the date range for proper cache segmentation.
  * On success, populates the Zustand events store.
+ * Automatically disabled when offline (uses cached data from Zustand store).
  */
 export function useEvents({
   accountId,
@@ -71,6 +73,8 @@ export function useEvents({
   enabled = true,
   transform = defaultTransform,
 }: UseEventsOptions) {
+  const isOnline = onlineManager.isOnline();
+
   const query = useQuery<RawEventData[], Error>({
     queryKey: queryKeys.events.byRange(
       accountId,
@@ -79,7 +83,7 @@ export function useEvents({
     ),
     queryFn: () => adapter.listEvents(accountId, range),
     staleTime: STALE_TIMES.events,
-    enabled,
+    enabled: enabled && isOnline,
   });
 
   // Populate Zustand events store when query data changes

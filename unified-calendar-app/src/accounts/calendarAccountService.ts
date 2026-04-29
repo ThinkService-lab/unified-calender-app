@@ -185,7 +185,13 @@ export function createCalendarAccountService(
         });
       }
 
-      // Step 5: Trigger initial full sync via SyncEngine
+      // Step 5: Increment connected_account_count in user_subscription table
+      await db.execute(
+        `UPDATE user_subscription SET connected_account_count = connected_account_count + 1 WHERE user_id = ?`,
+        [input.userId],
+      );
+
+      // Step 6: Trigger initial full sync via SyncEngine
       try {
         await syncEngine.fullSync(accountId);
       } catch {
@@ -214,8 +220,8 @@ export function createCalendarAccountService(
   async function removeAccount(accountId: string): Promise<AccountResult> {
     try {
       // Verify account exists
-      const rows = await db.query<{ id: string; provider_id: string }>(
-        `SELECT id, provider_id FROM calendar_accounts WHERE id = ?`,
+      const rows = await db.query<{ id: string; provider_id: string; user_id: string }>(
+        `SELECT id, provider_id, user_id FROM calendar_accounts WHERE id = ?`,
         [accountId],
       );
 
@@ -224,6 +230,7 @@ export function createCalendarAccountService(
       }
 
       const providerId = rows[0].provider_id;
+      const userId = rows[0].user_id;
 
       // Step 1: Cancel any pending/in-progress sync queue entries for this account
       // to prevent the sync engine from racing against the CASCADE delete.
@@ -237,6 +244,12 @@ export function createCalendarAccountService(
       await db.execute(
         `DELETE FROM calendar_accounts WHERE id = ?`,
         [accountId],
+      );
+
+      // Step 3: Decrement connected_account_count in user_subscription table
+      await db.execute(
+        `UPDATE user_subscription SET connected_account_count = MAX(0, connected_account_count - 1) WHERE user_id = ?`,
+        [userId],
       );
 
       // Gap #5 fix: Clear events from Zustand events store for this account
