@@ -130,6 +130,45 @@ export const CREATE_TABLES_SQL: string[] = [
     first_opened_at INTEGER NOT NULL,
     tooltips_dismissed TEXT NOT NULL DEFAULT '[]'
   )`,
+
+  // Shared calendar views (Team tier)
+  `CREATE TABLE IF NOT EXISTS shared_views (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    calendar_ids TEXT NOT NULL DEFAULT '[]',
+    max_members INTEGER NOT NULL DEFAULT 20,
+    created_at INTEGER NOT NULL
+  )`,
+
+  // Shared view members
+  `CREATE TABLE IF NOT EXISTS shared_view_members (
+    view_id TEXT NOT NULL REFERENCES shared_views(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL,
+    permission TEXT NOT NULL DEFAULT 'read-only',
+    added_at INTEGER NOT NULL,
+    PRIMARY KEY (view_id, user_id)
+  )`,
+
+  // Delegation grants
+  `CREATE TABLE IF NOT EXISTS delegation_grants (
+    id TEXT PRIMARY KEY,
+    delegator_id TEXT NOT NULL,
+    delegate_id TEXT NOT NULL,
+    calendar_ids TEXT NOT NULL DEFAULT '[]',
+    permission TEXT NOT NULL DEFAULT 'read-only',
+    granted_at INTEGER NOT NULL,
+    revoked_at INTEGER
+  )`,
+
+  // Deletion requests (tracks account deletion progress)
+  `CREATE TABLE IF NOT EXISTS deletion_requests (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    requested_at INTEGER NOT NULL,
+    scheduled_completion_at INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+  )`,
 ];
 
 /**
@@ -141,6 +180,10 @@ export const CREATE_INDEXES_SQL: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_events_sync ON events(sync_status)`,
   `CREATE INDEX IF NOT EXISTS idx_events_provider_id ON events(provider_event_id)`,
   `CREATE INDEX IF NOT EXISTS idx_auth_events_user ON auth_events(user_id, timestamp)`,
+  `CREATE INDEX IF NOT EXISTS idx_shared_views_owner ON shared_views(owner_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_delegation_grants_delegate ON delegation_grants(delegate_id, revoked_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_delegation_grants_delegator ON delegation_grants(delegator_id, revoked_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_deletion_requests_user ON deletion_requests(user_id)`,
 ];
 
 /**

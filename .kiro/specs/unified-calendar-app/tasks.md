@@ -355,54 +355,54 @@ This plan implements the Unified Calendar App in dependency order: foundational 
   - Verify property tests for tier enforcement, grace period, and data removal pass
   - Ask the user if questions arise
 
-- [ ] 14. Implement shared views, delegation, and security
-  - [ ] 14.1 Implement shared calendar views
+- [x] 14. Implement shared views, delegation, and security
+  - [x] 14.1 Implement shared calendar views
     - Create shared view with designated members (Team tier only)
     - Enforce 20-member limit per shared view
     - Apply privacy layer visibility rules for shared view members
     - _Requirements: 14.1, 14.6_
 
-  - [ ] 14.2 Implement delegation system
+  - [x] 14.2 Implement delegation system
     - Grant delegation: read-only or read-write permission levels
     - Delegate CRUD: allow create/update/delete for read-write delegates, reject writes for read-only
     - Record delegate identity in `modifiedBy` field on event modifications
     - Revoke delegation: remove access within 10 seconds
     - _Requirements: 14.2, 14.3, 14.4, 14.5_
 
-  - [ ]* 14.3 Write property test: Delegation permission enforcement
+  - [x]* 14.3 Write property test: Delegation permission enforcement
     - **Property 21: Delegation permission enforcement**
     - Build `arbDelegationGrant()` arbitrary
     - Assert: read-write allows CRUD, read-only rejects writes, revoked rejects all
     - **Validates: Requirements 14.2, 14.3, 14.5**
 
-  - [ ]* 14.4 Write property test: Delegate modification audit trail
+  - [x]* 14.4 Write property test: Delegate modification audit trail
     - **Property 22: Delegate modification audit trail**
     - Assert: `modifiedBy` contains delegate's user ID after delegate modification
     - **Validates: Requirements 14.4**
 
-  - [ ]* 14.5 Write property test: Shared view member limit enforcement
+  - [x]* 14.5 Write property test: Shared view member limit enforcement
     - **Property 23: Shared view member limit enforcement**
     - Assert: adding member when count = 20 is rejected
     - **Validates: Requirements 14.6**
 
-  - [ ] 14.6 Implement auth event logging and session activity
+  - [x] 14.6 Implement auth event logging and session activity
     - Log all auth events (login, logout, token_refresh, token_revoked, password_change) to `auth_events` table
     - Expose session activity view showing recent sign-ins
     - Implement rate limiting on authentication endpoints
     - _Requirements: 13.5, 13.6_
 
-  - [ ]* 14.7 Write property test: Auth event logging completeness
+  - [x]* 14.7 Write property test: Auth event logging completeness
     - **Property 31: Auth event logging completeness**
     - Assert: each auth action creates exactly one AuthEvent with correct eventType, platform, timestamp
     - **Validates: Requirements 13.6**
 
-  - [ ] 14.8 Implement user data service
+  - [x] 14.8 Implement user data service
     - Implement `deleteUserAccount(userId)`: erase local data immediately, schedule server deletion within 30 days
     - Implement `getDeletionStatus(userId)` returning pending/in_progress/completed
     - Return `DeletionReceipt` with `scheduledCompletionAt` ≤ 30 days from request
     - _Requirements: 13.4_
 
-  - [ ]* 14.9 Write property test: Server-side data deletion completeness
+  - [x]* 14.9 Write property test: Server-side data deletion completeness
     - **Property 30: Server-side data deletion completeness**
     - Assert: `scheduledCompletionAt` ≤ 30 days, zero records after completion
     - **Validates: Requirements 13.4**

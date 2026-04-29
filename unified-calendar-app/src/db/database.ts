@@ -91,6 +91,10 @@ export async function verifySchema(driver: DatabaseDriver): Promise<boolean> {
     'scheduling_preferences',
     'auth_events',
     'onboarding_state',
+    'shared_views',
+    'shared_view_members',
+    'delegation_grants',
+    'deletion_requests',
   ];
 
   const rows = await driver.query<{ name: string }>(
