@@ -331,8 +331,8 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Assert: features accessible for exactly 7 days after payment failure, then Free tier enforced
     - **Validates: Requirements 10.6**
 
-- [ ] 12. Implement event CRUD operations
-  - [ ] 12.1 Implement full read-write event management
+- [x] 12. Implement event CRUD operations
+  - [x] 12.1 Implement full read-write event management
     - Create event: write to local SQLite, queue outbound sync to provider
     - Update event: local write, propagate to provider within 5 seconds
     - Delete event: local delete, propagate to provider within 5 seconds
@@ -340,7 +340,7 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Queue failed operations for retry with user notification
     - _Requirements: 3.1, 3.2, 3.3, 3.6_
 
-  - [ ] 12.2 Implement calendar account management
+  - [x] 12.2 Implement calendar account management
     - Connect account: OAuth flow → store credentials → initial sync
     - Remove account: delete all local data (events, sync queue, preferences) within 5 seconds via CASCADE
     - _Requirements: 1.2, 1.6_
@@ -350,7 +350,7 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Assert: after account removal, zero records remain for that account in all tables
     - **Validates: Requirements 1.6, 13.4**
 
-- [ ] 13. Checkpoint - Validate business logic layers
+- [x] 13. Checkpoint - Validate business logic layers
   - Ensure all tests pass for subscription management, event CRUD, stores, and query hooks
   - Verify property tests for tier enforcement, grace period, and data removal pass
   - Ask the user if questions arise
