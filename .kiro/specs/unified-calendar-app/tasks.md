@@ -407,30 +407,32 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Assert: `scheduledCompletionAt` ≤ 30 days, zero records after completion
     - **Validates: Requirements 13.4**
 
-- [ ] 15. Implement AI scheduling assistant
-  - [ ] 15.1 Implement AISchedulingAssistant service
-    - Implement `suggestSlots(request, calendars, preferences)`: analyze availability, return top 3 conflict-free slots
+- [x] 15. Implement AI scheduling assistant
+  - [x] 15.1 Implement AISchedulingAssistant service
+    - Gate access behind Pro/Team tier subscription check (reject with upgrade prompt on Free tier)
+    - Implement `suggestSlots(request, calendars, preferences)`: analyze availability, return top 3 conflict-free slots with `score` (0-1 confidence) and `tradeoffs` explanations
     - Respect scheduling preferences: preferred hours, minimum buffer, max meetings per day, focus time blocks
     - If no slot within preferences, suggest closest alternatives with trade-off explanations
     - Implement `learnFromPattern(event, action)` for on-device pattern learning
     - Implement `getPreferences(userId)` backed by `scheduling_preferences` table
     - Consider shared free/busy information for external attendees where available
+    - When calling server-side AI service (`POST /ai/suggest-slots`), strip event titles, descriptions, and attendee names — send only anonymized availability windows (time blocks)
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6_
 
-  - [ ] 15.2 Integrate on-device TensorFlow Lite model
+  - [x] 15.2 Integrate on-device TensorFlow Lite model
     - Keep model under 1MB with INT8 quantization
     - Run inference off main thread
     - All training data stays on device
     - Provide fallback heuristics for new users with insufficient data
     - _Requirements: 8.3_
 
-  - [ ]* 15.3 Write property test: AI suggestions respect preferences
+  - [x]* 15.3 Write property test: AI suggestions respect preferences
     - **Property 24: AI scheduling suggestions respect preferences**
     - Build `arbSchedulingPreferences()` arbitrary
     - Assert: slots within preferred hours, buffer maintained, max meetings not exceeded
     - **Validates: Requirements 8.5**
 
-  - [ ]* 15.4 Write property test: AI suggestions are conflict-free
+  - [x]* 15.4 Write property test: AI suggestions are conflict-free
     - **Property 25: AI scheduling suggestions are conflict-free**
     - Assert: all suggested slots have zero overlap with existing events, count ≤ 3
     - **Validates: Requirements 8.2**

@@ -61,5 +61,5 @@ export interface MeetingRequest {
   duration: number;
   attendeeEmails: string[];
   dateRange: { start: Date; end: Date };
-  priority: 'high' | 'medium' | 'low';
+  priority: 'high' | 'medium' | 'low' | 'normal';
 }
