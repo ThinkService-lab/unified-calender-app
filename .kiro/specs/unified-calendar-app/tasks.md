@@ -437,13 +437,13 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Assert: all suggested slots have zero overlap with existing events, count ≤ 3
     - **Validates: Requirements 8.2**
 
-- [ ] 16. Checkpoint - Validate delegation, security, and AI layers
+- [x] 16. Checkpoint - Validate delegation, security, and AI layers
   - Ensure all tests pass for shared views, delegation, auth logging, user data service, and AI scheduling
   - Verify property tests for delegation, auth events, deletion, and AI suggestions pass
   - Ask the user if questions arise
 
-- [ ] 17. Implement UI layer - Unified Calendar View
-  - [ ] 17.1 Implement responsive layout system
+- [x] 17. Implement UI layer - Unified Calendar View
+  - [x] 17.1 Implement responsive layout system
     - Create `ResponsiveLayout` with breakpoints: phone (320), tablet (768), desktop (1024), wide (1440)
     - Implement `useBreakpoint()` React hook
     - Phone: single column, bottom tab nav, agenda/day default
@@ -452,7 +452,7 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Wide: full three-column layout, month default
     - _Requirements: 9.5_
 
-  - [ ] 17.2 Implement Unified View with display modes
+  - [x] 17.2 Implement Unified View with display modes
     - Implement day, week, month, and agenda display modes
     - Color-code events by calendar account
     - Toggle calendar visibility with ≤ 200ms response
@@ -460,7 +460,7 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Use `FlatList` with `getItemLayout` for long event lists
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.6_
 
-  - [ ] 17.3 Implement overlapping event layout algorithm
+  - [x] 17.3 Implement overlapping event layout algorithm
     - Assign distinct column positions to time-overlapping events
     - Render all overlapping events side by side without truncation
     - _Requirements: 2.5_
@@ -475,7 +475,7 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Assert: each overlapping event gets a distinct column position, none hidden
     - **Validates: Requirements 2.5**
 
-  - [ ] 17.6 Implement event editor (create/edit/delete)
+  - [x] 17.6 Implement event editor (create/edit/delete)
     - Event creation form with calendar account selector
     - Event editing with recurrence options (daily, weekly, monthly, yearly)
     - Single-instance edit for recurring events (exception creation)
@@ -483,7 +483,7 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Conflict warning display with alternative time suggestions
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 7.2, 7.3_
 
-  - [ ] 17.7 Implement accessibility compliance
+  - [x] 17.7 Implement accessibility compliance
     - Add accessible labels to all interactive elements
     - Calendar events announce: title, time, calendar name, conflict status
     - Ensure WCAG 2.1 AA contrast ratios (4.5:1 text, 3:1 UI)
