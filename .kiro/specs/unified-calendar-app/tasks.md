@@ -494,8 +494,8 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Respect `prefers-reduced-motion`
     - _Requirements: 9.6_
 
-- [ ] 18. Implement onboarding and internationalization
-  - [ ] 18.1 Implement OnboardingManager
+- [x] 18. Implement onboarding and internationalization
+  - [x] 18.1 Implement OnboardingManager
     - 4-step guided flow: welcome → connect_first_account → choose_view → explore_features
     - Allow first account connection within 60 seconds
     - Display Unified View with all calendars on completion
@@ -508,15 +508,15 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Assert: total steps = 4, completedSteps.length ≤ 4
     - **Validates: Requirements 11.1**
 
-  - [ ] 18.3 Implement I18nService
+  - [x] 18.3 Implement I18nService
     - Support 10 languages: en, es, fr, de, ja, ko, zh-CN, pt, it, ar
     - Implement `t(key, params)` translation function
     - Implement RTL support for Arabic
     - Create translation files for all 10 locales
     - _Requirements: 11.6_
 
-- [ ] 19. Implement error UX and notifications
-  - [ ] 19.1 Implement error display components
+- [x] 19. Implement error UX and notifications
+  - [x] 19.1 Implement error display components
     - Non-intrusive banner for sync errors with "Details" action
     - Badge on calendar account for auth errors with "Reconnect" action
     - Persistent banner for payment errors showing grace period countdown and "Update Payment" action
@@ -525,7 +525,7 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Never display raw error codes, stack traces, or technical jargon
     - _Requirements: 19.1, 19.2, 19.3, 19.4, 19.5, 19.6_
 
-  - [ ] 19.2 Implement push notification system
+  - [x] 19.2 Implement push notification system
     - Request notification permissions during onboarding
     - Platform-specific handlers: APNs (iOS), FCM (Android), Web Push API
     - Notification categories: conflicts, reminders, sync status, payment
