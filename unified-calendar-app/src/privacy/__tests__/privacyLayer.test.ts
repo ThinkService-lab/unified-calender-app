@@ -1,6 +1,6 @@
 /**
  * Unit tests for PrivacyLayer service.
- * Requirements: 5.1, 5.2, 5.3, 5.4, 5.5
+ * Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 10.2
  */
 
 import { createPrivacyLayer, PrivacyLayer } from '../privacyLayer';
@@ -8,11 +8,14 @@ import { DatabaseDriver } from '../../db';
 import { CalendarEvent, VisibilityLevel, Audience } from '../../types';
 
 /** In-memory mock database driver for testing */
-function createMockDriver(): DatabaseDriver {
+function createMockDriver(calendarOwners?: Record<string, string>): DatabaseDriver {
   const tables: Record<string, Record<string, Record<string, unknown>>> = {
     privacy_preferences: {},
     event_visibility_overrides: {},
   };
+
+  // Default calendar owners: cal-1 → user-1, etc.
+  const owners = calendarOwners ?? {};
 
   return {
     async execute(sql: string, params?: unknown[]): Promise<void> {
@@ -33,6 +36,18 @@ function createMockDriver(): DatabaseDriver {
     },
 
     async query<T>(sql: string, params?: unknown[]): Promise<T[]> {
+      // Batch query: SELECT ... FROM calendar_accounts WHERE id IN (?, ?, ...)
+      if (sql.match(/FROM calendar_accounts.*IN/i) && params) {
+        const results: T[] = [];
+        for (const calendarId of params as string[]) {
+          const userId = owners[calendarId];
+          if (userId) {
+            results.push({ id: calendarId, user_id: userId } as T);
+          }
+        }
+        return results;
+      }
+
       // Batch query: SELECT ... WHERE calendar_id IN (?, ?, ...)
       if (sql.match(/FROM privacy_preferences.*IN/i) && params) {
         const results: T[] = [];
@@ -334,6 +349,162 @@ describe('PrivacyLayer', () => {
     it('returns empty array for empty events input', async () => {
       const filtered = await privacyLayer.filterForAudience([], sharedViewAudience);
       expect(filtered).toEqual([]);
+    });
+  });
+
+  describe('subscription tier gating (Req 10.2)', () => {
+    const sharedViewAudience: Audience = {
+      type: 'shared-view-member',
+      userId: 'user-2',
+      permissionLevel: 'read-only',
+    };
+
+    const delegateAudience: Audience = {
+      type: 'delegate',
+      userId: 'user-3',
+      permissionLevel: 'read-write',
+    };
+
+    it('degrades private to public when owner lacks advanced_privacy', async () => {
+      const driverWithOwners = createMockDriver({ 'cal-1': 'owner-free' });
+      const layer = createPrivacyLayer({
+        driver: driverWithOwners,
+        checkAdvancedPrivacyAccess: (_ownerId) => false, // Free tier
+      });
+
+      await layer.setVisibility('cal-1', 'private');
+      const events = [makeEvent()];
+      const filtered = await layer.filterForAudience(events, sharedViewAudience);
+
+      // Private should be degraded to public — events visible with full details
+      expect(filtered).toHaveLength(1);
+      expect(filtered[0].title).toBe('Team Meeting');
+      expect(filtered[0].description).toBe('Weekly sync');
+    });
+
+    it('degrades busy-only to public when owner lacks advanced_privacy', async () => {
+      const driverWithOwners = createMockDriver({ 'cal-1': 'owner-free' });
+      const layer = createPrivacyLayer({
+        driver: driverWithOwners,
+        checkAdvancedPrivacyAccess: (_ownerId) => false,
+      });
+
+      await layer.setVisibility('cal-1', 'busy-only');
+      const events = [makeEvent()];
+      const filtered = await layer.filterForAudience(events, delegateAudience);
+
+      // Busy-only should be degraded to public — full details visible
+      expect(filtered).toHaveLength(1);
+      expect(filtered[0].title).toBe('Team Meeting');
+      expect(filtered[0].attendees).toHaveLength(1);
+    });
+
+    it('enforces private visibility when owner has advanced_privacy', async () => {
+      const driverWithOwners = createMockDriver({ 'cal-1': 'owner-pro' });
+      const layer = createPrivacyLayer({
+        driver: driverWithOwners,
+        checkAdvancedPrivacyAccess: (_ownerId) => true, // Pro tier
+      });
+
+      await layer.setVisibility('cal-1', 'private');
+      const events = [makeEvent()];
+      const filtered = await layer.filterForAudience(events, sharedViewAudience);
+
+      expect(filtered).toHaveLength(0);
+    });
+
+    it('enforces busy-only visibility when owner has advanced_privacy', async () => {
+      const driverWithOwners = createMockDriver({ 'cal-1': 'owner-pro' });
+      const layer = createPrivacyLayer({
+        driver: driverWithOwners,
+        checkAdvancedPrivacyAccess: (_ownerId) => true,
+      });
+
+      await layer.setVisibility('cal-1', 'busy-only');
+      const events = [makeEvent()];
+      const filtered = await layer.filterForAudience(events, sharedViewAudience);
+
+      expect(filtered).toHaveLength(1);
+      expect(filtered[0].title).toBe('Busy');
+      expect(filtered[0].description).toBeNull();
+    });
+
+    it('ignores event overrides when owner lacks advanced_privacy', async () => {
+      const driverWithOwners = createMockDriver({ 'cal-1': 'owner-free' });
+      const layer = createPrivacyLayer({
+        driver: driverWithOwners,
+        checkAdvancedPrivacyAccess: (_ownerId) => false,
+      });
+
+      await layer.setVisibility('cal-1', 'public');
+      await layer.setEventOverride('event-1', 'private');
+      const events = [makeEvent()];
+      const filtered = await layer.filterForAudience(events, sharedViewAudience);
+
+      // Event override to private should be ignored — degraded to public
+      expect(filtered).toHaveLength(1);
+      expect(filtered[0].title).toBe('Team Meeting');
+    });
+
+    it('handles mixed tiers across calendars', async () => {
+      const driverWithOwners = createMockDriver({
+        'cal-pro': 'owner-pro',
+        'cal-free': 'owner-free',
+      });
+      const layer = createPrivacyLayer({
+        driver: driverWithOwners,
+        checkAdvancedPrivacyAccess: (ownerId) => ownerId === 'owner-pro',
+      });
+
+      await layer.setVisibility('cal-pro', 'private');
+      await layer.setVisibility('cal-free', 'private');
+
+      const events = [
+        makeEvent({ id: 'e1', calendarAccountId: 'cal-pro', title: 'Pro Private' }),
+        makeEvent({ id: 'e2', calendarAccountId: 'cal-free', title: 'Free Private' }),
+      ];
+
+      const filtered = await layer.filterForAudience(events, sharedViewAudience);
+
+      // Pro owner's private calendar: hidden (0 events)
+      // Free owner's private calendar: degraded to public (visible)
+      expect(filtered).toHaveLength(1);
+      expect(filtered[0].title).toBe('Free Private');
+    });
+
+    it('owner audience bypasses tier check entirely', async () => {
+      const driverWithOwners = createMockDriver({ 'cal-1': 'owner-free' });
+      const layer = createPrivacyLayer({
+        driver: driverWithOwners,
+        checkAdvancedPrivacyAccess: (_ownerId) => false,
+      });
+
+      await layer.setVisibility('cal-1', 'private');
+      const ownerAudience: Audience = {
+        type: 'owner',
+        userId: 'owner-free',
+        permissionLevel: 'read-write',
+      };
+
+      const events = [makeEvent()];
+      const filtered = await layer.filterForAudience(events, ownerAudience);
+
+      // Owner always sees everything regardless of tier
+      expect(filtered).toHaveLength(1);
+      expect(filtered[0].title).toBe('Team Meeting');
+    });
+
+    it('backward-compatible: no checker means all visibility rules enforced', async () => {
+      // Using the bare driver (no config object) — backward-compatible path
+      const bareDriver = createMockDriver();
+      const layer = createPrivacyLayer(bareDriver);
+
+      await layer.setVisibility('cal-1', 'private');
+      const events = [makeEvent()];
+      const filtered = await layer.filterForAudience(events, sharedViewAudience);
+
+      // Without a checker, private is enforced as before
+      expect(filtered).toHaveLength(0);
     });
   });
 });

@@ -10,7 +10,8 @@
  */
 
 import type { DatabaseDriver } from '../db/database';
-import type { DelegationGrant, CalendarEvent } from '../types';
+import type { PrivacyLayer } from '../privacy/privacyLayer';
+import type { DelegationGrant, CalendarEvent, Audience } from '../types';
 
 export interface DelegationResult {
   success: boolean;
@@ -103,6 +104,8 @@ function generateUUID(): string {
 
 export interface DelegationServiceConfig {
   db: DatabaseDriver;
+  /** Privacy layer for filtering events based on visibility rules (Req 5.5) */
+  privacyLayer?: PrivacyLayer;
 }
 
 /**
@@ -111,7 +114,7 @@ export interface DelegationServiceConfig {
 export function createDelegationService(
   config: DelegationServiceConfig,
 ): DelegationService {
-  const { db } = config;
+  const { db, privacyLayer } = config;
 
   async function grantDelegation(
     delegatorId: string,
@@ -454,7 +457,27 @@ export function createDelegationService(
       [calendarAccountId],
     );
 
-    return rows.map(mapRowToEvent);
+    const events: CalendarEvent[] = rows.map(mapRowToEvent);
+
+    // Apply privacy layer filtering for the delegate's audience (Req 5.5).
+    // This ensures delegates only see events according to the calendar owner's
+    // visibility rules (private calendars hidden, busy-only stripped, etc.).
+    if (privacyLayer) {
+      // Determine the delegate's permission level from their active grant
+      const grants = await getActiveDelegationsForDelegate(delegateId);
+      const grant = grants.find((g) => g.calendarIds.includes(calendarAccountId));
+      const permissionLevel = grant?.permission ?? 'read-only';
+
+      const audience: Audience = {
+        type: 'delegate',
+        userId: delegateId,
+        permissionLevel,
+      };
+
+      return privacyLayer.filterForAudience(events, audience);
+    }
+
+    return events;
   }
 
   return {

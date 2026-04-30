@@ -4,7 +4,7 @@
  */
 
 export { createPrivacyLayer } from './privacyLayer';
-export type { PrivacyLayer } from './privacyLayer';
+export type { PrivacyLayer, PrivacyLayerConfig, AdvancedPrivacyAccessChecker } from './privacyLayer';
 
 export {
   createPreferenceSyncService,

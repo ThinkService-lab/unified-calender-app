@@ -208,9 +208,13 @@ export async function bootstrapApp(config: AppBootstrapConfig): Promise<AppConte
     http: { post: async () => ({ data: {} as any }) }, // Placeholder HTTP client
   });
 
-  // ── 9. Create privacy layer ──
+  // ── 9. Create privacy layer (with subscription tier gating for advanced privacy, Req 10.2) ──
   const { createPrivacyLayer } = await import('../privacy/privacyLayer');
-  const privacyLayer = createPrivacyLayer(db);
+  const privacyLayer = createPrivacyLayer({
+    driver: db,
+    checkAdvancedPrivacyAccess: (calendarOwnerId: string) =>
+      subscriptionManager.checkFeatureAccess(calendarOwnerId, 'advanced_privacy'),
+  });
 
   // ── 10. Create AI scheduling assistant (gated by subscription) ──
   const { createAISchedulingAssistant } = await import('../ai/aiSchedulingAssistant');

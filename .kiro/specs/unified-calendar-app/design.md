@@ -217,14 +217,29 @@ interface SyncEngine {
 ### PrivacyLayer
 
 ```typescript
-interface PrivacyLayer {
-  getVisibility(calendarId: string): VisibilityLevel;
-  setVisibility(calendarId: string, level: VisibilityLevel): void;
-  getEventOverride(eventId: string): VisibilityLevel | null;
-  setEventOverride(eventId: string, level: VisibilityLevel): void;
-  
-  filterForAudience(events: CalendarEvent[], audience: Audience): CalendarEvent[];
+// Optional callback for subscription tier gating (Req 10.2).
+// When provided, filterForAudience verifies the calendar owner has Pro/Team
+// tier before enforcing busy-only or private visibility rules.
+// When omitted, all visibility rules are enforced (backward-compatible).
+type AdvancedPrivacyAccessChecker = (calendarOwnerId: string) => boolean;
+
+interface PrivacyLayerConfig {
+  driver: DatabaseDriver;
+  checkAdvancedPrivacyAccess?: AdvancedPrivacyAccessChecker;
 }
+
+interface PrivacyLayer {
+  getVisibility(calendarId: string): Promise<VisibilityLevel>;
+  setVisibility(calendarId: string, level: VisibilityLevel): Promise<void>;
+  getEventOverride(eventId: string): Promise<VisibilityLevel | null>;
+  setEventOverride(eventId: string, level: VisibilityLevel): Promise<void>;
+  removeEventOverride(eventId: string): Promise<void>;
+  
+  filterForAudience(events: CalendarEvent[], audience: Audience): Promise<CalendarEvent[]>;
+}
+
+// Factory accepts either a bare DatabaseDriver (backward-compatible) or PrivacyLayerConfig
+function createPrivacyLayer(driverOrConfig: DatabaseDriver | PrivacyLayerConfig): PrivacyLayer;
 
 type VisibilityLevel = 'public' | 'busy-only' | 'private';
 
@@ -234,6 +249,8 @@ interface Audience {
   permissionLevel: 'read-only' | 'read-write';
 }
 ```
+
+**Subscription tier gating behavior (Req 10.2):** When `checkAdvancedPrivacyAccess` is provided and returns `false` for a calendar owner, `filterForAudience` degrades that calendar's effective visibility to `public`. This means Free-tier users cannot enforce busy-only or private visibility on their calendars for shared/delegated audiences. Owner audiences always bypass the tier check.
 
 ### ConflictDetector
 
@@ -331,8 +348,9 @@ interface UserPreferenceSyncService {
 }
 
 interface EncryptedPreferences {
-  ciphertext: ArrayBuffer;
-  iv: ArrayBuffer;
+  ciphertext: string;            // Base64-encoded ciphertext
+  iv: string;                    // Base64-encoded initialization vector
+  authTag: string;               // Base64-encoded GCM authentication tag
   version: number;
   updatedAt: Date;
 }
