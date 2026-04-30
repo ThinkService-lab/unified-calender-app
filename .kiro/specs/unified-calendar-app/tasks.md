@@ -534,33 +534,33 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Background push notification reception on mobile
     - _Requirements: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6_
 
-- [ ] 20. Implement app lifecycle and background sync
-  - [ ] 20.1 Implement app lifecycle handlers
+- [x] 20. Implement app lifecycle and background sync
+  - [x] 20.1 Implement app lifecycle handlers
     - On background: complete in-progress sync, close WebSocket, rely on push notifications
     - On foreground: reconnect WebSocket, delta sync within 10 seconds
     - On termination: persist all pending sync queue entries to SQLite
     - On launch after termination: process all pending sync queue entries before accepting new mutations
     - _Requirements: 16.1, 16.2, 16.3, 16.4, 16.6_
 
-  - [ ] 20.2 Implement background fetch registration
+  - [x] 20.2 Implement background fetch registration
     - iOS: register for background fetch (minimum 15-minute interval)
     - Android: register WorkManager for periodic sync (minimum 15-minute interval)
     - _Requirements: 16.5_
 
-  - [ ] 20.3 Implement WebSocket connection management
+  - [x] 20.3 Implement WebSocket connection management
     - Use `wss://` only with heartbeat (30s) and auto-reconnect with exponential backoff
     - Subscribe via `{ type: 'subscribe', userId, deviceId }`
     - Handle inbound `{ type: 'event_changed', accountId, changeType, syncToken }`
     - Close on background, reconnect on foreground
     - _Requirements: 4.3, 16.2, 16.3_
 
-- [ ] 21. Checkpoint - Validate UI, onboarding, and lifecycle
+- [x] 21. Checkpoint - Validate UI, onboarding, and lifecycle
   - Ensure all tests pass for UI components, onboarding, i18n, error UX, notifications, and lifecycle
   - Verify property tests for unified view, overlapping layout, and onboarding pass
   - Ask the user if questions arise
 
-- [ ] 22. Integration wiring and final validation
-  - [ ] 22.1 Wire all components together
+- [x] 22. Integration wiring and final validation
+  - [x] 22.1 Wire all components together
     - Connect UI layer → Zustand stores → TanStack Query → SyncEngine → Provider Adapters
     - Connect SyncEngine → ConflictDetector → push notifications
     - Connect SubscriptionManager → feature gating across all components
@@ -572,7 +572,7 @@ This plan implements the Unified Calendar App in dependency order: foundational 
     - Ensure all data flows match the architecture diagram in design
     - _Requirements: 2.1, 4.1, 7.1, 8.1, 10.1, 13.1, 13.3_
 
-  - [ ] 22.2 Implement TLS and network security
+  - [x] 22.2 Implement TLS and network security
     - Ensure all Axios instances use HTTPS (TLS 1.2+)
     - Set timeouts on all requests (5-10 seconds)
     - Create per-provider Axios instances with base URLs and auth interceptors

@@ -65,6 +65,7 @@ function createTestStore(overrides: Partial<SubscriptionState> = {}) {
 function createMockSubscriptionManager(): SubscriptionManager {
   return {
     getCurrentTier: jest.fn().mockReturnValue('free'),
+    getCurrentTierFromDb: jest.fn().mockResolvedValue('free'),
     validateReceipt: jest.fn().mockResolvedValue({ tier: 'free', expiresAt: new Date(), gracePeriodEndsAt: null }),
     checkFeatureAccess: jest.fn().mockReturnValue(false),
     handleDowngrade: jest.fn().mockResolvedValue(undefined),

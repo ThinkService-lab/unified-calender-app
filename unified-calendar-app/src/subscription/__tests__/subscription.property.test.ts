@@ -252,6 +252,9 @@ describe('Subscription Property Tests', () => {
             max: new Date('2026-12-31'),
           }),
           (failureDate) => {
+            // Guard against invalid dates (NaN)
+            fc.pre(!isNaN(failureDate.getTime()));
+
             const GRACE_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
             const expectedEnd = new Date(failureDate.getTime() + GRACE_PERIOD_MS);
 

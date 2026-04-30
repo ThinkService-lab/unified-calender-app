@@ -97,3 +97,29 @@ export {
   SyncHealthIndicator,
   type ProviderHealth,
 } from './syncHealthIndicator';
+
+// Network security (TLS enforcement, data leak prevention)
+export {
+  enforceHttps,
+  isAllowedProviderDomain,
+  addAllowedProviderDomain,
+  extractHostname,
+  stripSensitiveFields,
+  createSecurityRequestInterceptor,
+  createGoogleAxios,
+  createMicrosoftGraphAxios,
+  createCalDAVAxios,
+  createAllProviderAxios,
+  validateTimeout,
+  GOOGLE_CALENDAR_BASE_URL,
+  MICROSOFT_GRAPH_BASE_URL,
+  ALLOWED_PROVIDER_DOMAINS,
+  SENSITIVE_EVENT_FIELDS,
+  DEFAULT_TIMEOUT_MS,
+  MIN_TIMEOUT_MS,
+  MAX_TIMEOUT_MS,
+  type ProviderAxiosConfig,
+  type CalDAVAxiosConfig,
+  type AllProviderAxiosConfigs,
+  type ProviderAxiosInstances,
+} from './networkSecurity';
