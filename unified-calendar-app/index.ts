@@ -1,3 +1,8 @@
+// Required side-effect import for react-native-gesture-handler — must be at the
+// very top of the entry file (above any gesture-handler consumers). Without
+// this, pan/long-press/swipe gestures silently fail on Android.
+import 'react-native-gesture-handler';
+
 import { registerRootComponent } from 'expo';
 
 import App from './App';

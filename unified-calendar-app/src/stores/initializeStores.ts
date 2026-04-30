@@ -17,6 +17,10 @@ import { createSQLiteStorage, ensureKVTable } from './sqliteStorageAdapter';
 import { createCalendarAccountsStore } from './calendarAccountsStore';
 import { createEventsStore } from './eventsStore';
 import { createSubscriptionStore } from './subscriptionStore';
+import {
+  createUIPreferencesStore,
+  rebindDefaultUIPreferencesStore,
+} from './uiPreferencesStore';
 import type { CalendarAccountsState } from './calendarAccountsStore';
 import type { EventsState } from './eventsStore';
 import type { SubscriptionState } from './subscriptionStore';
@@ -25,6 +29,7 @@ export interface InitializedStores {
   calendarAccountsStore: ReturnType<typeof createCalendarAccountsStore>;
   eventsStore: ReturnType<typeof createEventsStore>;
   subscriptionStore: ReturnType<typeof createSubscriptionStore>;
+  uiPreferencesStore: ReturnType<typeof createUIPreferencesStore>;
   storage: StateStorage;
 }
 
@@ -48,11 +53,18 @@ export async function initializeStores(db: DatabaseDriver): Promise<InitializedS
   const calendarAccountsStore = createCalendarAccountsStore(storage);
   const eventsStore = createEventsStore(storage);
   const subscriptionStore = createSubscriptionStore(storage);
+  const uiPreferencesStore = createUIPreferencesStore(storage);
+
+  // Rebind the default `useUIPreferencesStore` singleton so consumers that
+  // import the hook directly (e.g. `useTokens()`) pick up the SQLite-backed
+  // instance without needing the InitializedStores reference.
+  rebindDefaultUIPreferencesStore(uiPreferencesStore);
 
   _initialized = {
     calendarAccountsStore,
     eventsStore,
     subscriptionStore,
+    uiPreferencesStore,
     storage,
   };
 

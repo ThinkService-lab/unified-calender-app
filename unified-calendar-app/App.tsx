@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { StyleSheet, View, Text, SafeAreaView, Platform } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import { UnifiedCalendarView } from './src/ui/calendar/UnifiedCalendarView';
 import type { CalendarEvent, CalendarAccount } from './src/types/models';
@@ -218,26 +219,31 @@ export default function App() {
   const events = React.useMemo(() => generateSampleEvents(), []);
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <View style={styles.container}>
-        <View style={styles.appHeader}>
-          <Text style={styles.appTitle} testID="app-title">Unified Calendar</Text>
-          <Text style={styles.appSubtitle}>All your calendars in one place</Text>
+    <GestureHandlerRootView style={styles.gestureRoot}>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.container}>
+          <View style={styles.appHeader}>
+            <Text style={styles.appTitle} testID="app-title">Unified Calendar</Text>
+            <Text style={styles.appSubtitle}>All your calendars in one place</Text>
+          </View>
+          <View style={styles.calendarContainer}>
+            <UnifiedCalendarView
+              events={events}
+              accounts={SAMPLE_ACCOUNTS}
+              initialViewMode="week"
+            />
+          </View>
         </View>
-        <View style={styles.calendarContainer}>
-          <UnifiedCalendarView
-            events={events}
-            accounts={SAMPLE_ACCOUNTS}
-            initialViewMode="week"
-          />
-        </View>
-      </View>
-      <StatusBar style="auto" />
-    </SafeAreaView>
+        <StatusBar style="auto" />
+      </SafeAreaView>
+    </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
+  gestureRoot: {
+    flex: 1,
+  },
   safeArea: {
     flex: 1,
     backgroundColor: '#F8F9FA',

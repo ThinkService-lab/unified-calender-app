@@ -1,6 +1,6 @@
 /**
  * Zustand stores - central export.
- * Requirements: 2.1, 6.1
+ * Requirements: 1.7, 1.8 (UI preferences), 2.1, 6.1 (offline cache)
  */
 
 // Store initialization (must be called at app startup with a DatabaseDriver)
@@ -18,6 +18,7 @@ export {
   useAccount,
   useAccountCount,
   useAccountSummary,
+  useIsAccountHidden,
 } from './calendarAccountsStore';
 export type { CalendarAccountsState } from './calendarAccountsStore';
 
@@ -29,6 +30,9 @@ export {
   useEvent,
   useEventCount,
   useEventSummary,
+  useIsRecentlyArrivedFromSync,
+  useIsPendingAnimatedDelete,
+  RECENTLY_ARRIVED_TTL_MS,
 } from './eventsStore';
 export type { EventsState, EventSyncStatus } from './eventsStore';
 
@@ -51,3 +55,22 @@ export {
   TIER_FEATURES,
 } from './subscriptionStore';
 export type { SubscriptionState } from './subscriptionStore';
+
+// UI preferences store
+export {
+  useUIPreferencesStore,
+  createUIPreferencesStore,
+  useColorSchemePreference,
+  useShortcutOverrides,
+  useResolvedSystemScheme,
+  useUIPreferences,
+  installAppearanceListener,
+  rebindDefaultUIPreferencesStore,
+  useEnsureDefaultAppearanceListener,
+} from './uiPreferencesStore';
+export type {
+  UIPreferences,
+  ColorScheme,
+  ResolvedSystemScheme,
+  UIPreferencesStore,
+} from './uiPreferencesStore';

@@ -60,3 +60,12 @@ export type { DateRange, AgendaGroup, MonthDayInfo } from './calendarViewModel';
 // Overlap layout algorithm
 export { computeOverlapLayout } from './overlapLayout';
 export type { EventLayoutInfo } from './overlapLayout';
+
+// Time slot utilities (snapping + coordinate conversion)
+export {
+  snapToIncrement,
+  yToMinutes,
+  minutesToY,
+  DEFAULT_SNAP_INCREMENT_MINUTES,
+} from './timeSlotUtils';
+export type { TimeSlotPosition } from './timeSlotUtils';
