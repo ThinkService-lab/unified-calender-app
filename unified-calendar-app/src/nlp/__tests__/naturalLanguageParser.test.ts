@@ -233,11 +233,18 @@ describe('NL Parser Edge Cases', () => {
   });
 
   describe('recurrence keyword detection', () => {
-    it('sets confidence.recurrence to "attempted_unresolved" when recurrence keywords present', () => {
+    it('parses "every weekday" into a WEEKLY rule with BYDAY=MO..FR', () => {
       const result = parseNaturalLanguage('Standup every weekday at 9am', REF_DATE);
-      expect(result.confidence.recurrence).toBe('attempted_unresolved');
-      // Recurrence parser module doesn't exist yet, so recurrence is null
-      expect(result.recurrence).toBeNull();
+      expect(result.confidence.recurrence).toBe('parsed');
+      expect(result.recurrence).not.toBeNull();
+      expect(result.recurrence!.frequency).toBe('weekly');
+      expect(result.recurrence!.interval).toBe(1);
+      expect(result.recurrence!.byDay).toEqual(['MO', 'TU', 'WE', 'TH', 'FR']);
+      // The recurrence phrase must be stripped from the title so it
+      // does not leak into the event title.
+      expect(result.title).toBe('Standup');
+      // Downstream extractors still see the trailing "at 9am".
+      expect(result.time).toEqual({ hours: 9, minutes: 0 });
     });
 
     it('sets confidence.recurrence to "none" when no recurrence keyword present', () => {
@@ -246,24 +253,58 @@ describe('NL Parser Edge Cases', () => {
       expect(result.recurrence).toBeNull();
     });
 
-    it('detects "weekly" as a recurrence keyword', () => {
+    it('parses bare "weekly" as a WEEKLY;INTERVAL=1 rule', () => {
       const result = parseNaturalLanguage('Weekly team sync at 10am', REF_DATE);
-      expect(result.confidence.recurrence).toBe('attempted_unresolved');
+      expect(result.confidence.recurrence).toBe('parsed');
+      expect(result.recurrence?.frequency).toBe('weekly');
+      expect(result.recurrence?.interval).toBe(1);
     });
 
-    it('detects "monthly" as a recurrence keyword', () => {
+    it('parses bare "monthly" as a MONTHLY;INTERVAL=1 rule', () => {
       const result = parseNaturalLanguage('Monthly review at 2pm', REF_DATE);
-      expect(result.confidence.recurrence).toBe('attempted_unresolved');
+      expect(result.confidence.recurrence).toBe('parsed');
+      expect(result.recurrence?.frequency).toBe('monthly');
+      expect(result.recurrence?.interval).toBe(1);
     });
 
-    it('detects "daily" as a recurrence keyword', () => {
+    it('parses bare "daily" as a DAILY;INTERVAL=1 rule', () => {
       const result = parseNaturalLanguage('Daily standup at 9am', REF_DATE);
-      expect(result.confidence.recurrence).toBe('attempted_unresolved');
+      expect(result.confidence.recurrence).toBe('parsed');
+      expect(result.recurrence?.frequency).toBe('daily');
+      expect(result.recurrence?.interval).toBe(1);
     });
 
-    it('detects "repeats" as a recurrence keyword', () => {
+    it('marks a bare "repeats" (no following pattern) as attempted_unresolved', () => {
+      // "repeats" without a following frequency or "every" phrase cannot
+      // be resolved to a rule. Per Req 17.8 the Quick Create Bar uses
+      // this state to open the EventEditor with the recurrence section
+      // highlighted so the user can fill in the frequency manually.
       const result = parseNaturalLanguage('Meeting repeats at 3pm', REF_DATE);
       expect(result.confidence.recurrence).toBe('attempted_unresolved');
+      expect(result.recurrence).toBeNull();
+    });
+
+    it('parses "every 2 weeks" as a WEEKLY;INTERVAL=2 rule', () => {
+      const result = parseNaturalLanguage('Team offsite every 2 weeks at 10am', REF_DATE);
+      expect(result.confidence.recurrence).toBe('parsed');
+      expect(result.recurrence?.frequency).toBe('weekly');
+      expect(result.recurrence?.interval).toBe(2);
+    });
+
+    it('parses "every first Monday" as MONTHLY;BYDAY=1MO', () => {
+      const result = parseNaturalLanguage('Board meeting every first Monday at 10am', REF_DATE);
+      expect(result.confidence.recurrence).toBe('parsed');
+      expect(result.recurrence?.frequency).toBe('monthly');
+      expect(result.recurrence?.byDay).toEqual(['1MO']);
+    });
+
+    it('parses "every Tuesday and Thursday" with sorted BYDAY', () => {
+      const result = parseNaturalLanguage(
+        'Tennis every Tuesday and Thursday at 6pm',
+        REF_DATE,
+      );
+      expect(result.confidence.recurrence).toBe('parsed');
+      expect(result.recurrence?.byDay).toEqual(['TU', 'TH']);
     });
   });
 });

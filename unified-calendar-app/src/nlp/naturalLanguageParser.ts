@@ -16,6 +16,7 @@
  */
 
 import type { RecurrenceRule } from '../types/models';
+import { parseRecurrence } from './recurrenceParser';
 
 /**
  * Three-state recurrence parsing outcome (Req 17.8).
@@ -137,7 +138,9 @@ export function parseNaturalLanguage(
   let original = trimmed;
 
   // The parsing order matters:
-  //   1. Recurrence keywords (reserved for Task 6 — only detect, do not parse)
+  //   1. Recurrence phrase (extracted first so its internal weekday name
+  //      doesn't fool the date extractor into reading "every Tuesday" as
+  //      "this upcoming Tuesday")
   //   2. Attendees ("with X [and Y]") — stable phrase boundary
   //   3. Duration ("for N ...")
   //   4. Time (must come before location so the trailing "at X" goes to location)
@@ -145,16 +148,12 @@ export function parseNaturalLanguage(
   //   6. Location ("at X")
   //   7. Remaining tokens → title
 
-  // ---- Recurrence (placeholder) -------------------------------------------
-  const recurrenceState: RecurrenceParseState = detectRecurrenceKeyword(lower)
-    ? 'attempted_unresolved'
-    : 'none';
-  // Remove recurrence keyword phrases from the working strings so they do
-  // not leak into the title. We only strip the handful of keywords we know
-  // about; any parameters (e.g. "every 2 weeks") remain and will show up
-  // in the title until Task 6 wires parseRecurrence in.
-  // Intentionally left in the text for now — stripping would require the
-  // full recurrence parser to know the exact span.  Task 6 will refine.
+  // ---- Recurrence ----------------------------------------------------------
+  const recurrenceResult = extractRecurrence(lower, original);
+  const recurrence = recurrenceResult.rule;
+  const recurrenceState = recurrenceResult.state;
+  lower = recurrenceResult.lowerRemainder;
+  original = recurrenceResult.originalRemainder;
 
   // ---- Attendees -----------------------------------------------------------
   const attendeeResult = extractAttendees(lower, original);
@@ -200,7 +199,7 @@ export function parseNaturalLanguage(
     duration,
     location,
     attendees,
-    recurrence: null,
+    recurrence,
     confidence: {
       date: dateConfidence,
       time: timeConfidence,
@@ -241,8 +240,18 @@ function normaliseWhitespace(s: string): string {
   return s.replace(/\s+/g, ' ').trim();
 }
 
-// --- Recurrence keyword detection -------------------------------------------
+// --- Recurrence extraction --------------------------------------------------
 
+interface RecurrenceResult extends ExtractionResult {
+  rule: RecurrenceRule | null;
+  state: RecurrenceParseState;
+}
+
+/**
+ * Recurrence keywords that can start a recurrence phrase. Order matters
+ * only for the regex: all alternatives are anchored at word boundaries,
+ * so longer words still match correctly.
+ */
 const RECURRENCE_KEYWORDS = [
   'every',
   'each',
@@ -255,12 +264,102 @@ const RECURRENCE_KEYWORDS = [
   'repeats',
 ];
 
-function detectRecurrenceKeyword(lower: string): boolean {
-  for (const kw of RECURRENCE_KEYWORDS) {
-    const re = new RegExp(`\\b${kw}\\b`);
-    if (re.test(lower)) return true;
+/**
+ * Find a recurrence phrase in the input, delegate to
+ * {@link parseRecurrence} for structural parsing, and excise the span
+ * so downstream extractors (date, location, title) do not see its
+ * internal tokens.
+ *
+ * Three outcomes, mirroring {@link RecurrenceParseState}:
+ *   - no keyword found → state='none', rule=null, text untouched
+ *   - keyword found + parse succeeds → state='parsed', rule=<parsed>,
+ *     phrase span excised
+ *   - keyword found + parse fails → state='attempted_unresolved', rule=null,
+ *     keyword alone excised (so the title doesn't end up with the
+ *     keyword in it, but unrelated trailing text is preserved)
+ *
+ * Strategy — "maximal munch" phrase finder:
+ *
+ *   1. Find the first recurrence keyword in the input.
+ *   2. Walk forward word-by-word from the keyword. For each prefix
+ *      starting at the keyword, try `parseRecurrence(prefix)`. Keep
+ *      the LONGEST prefix that parses successfully.
+ *   3. If any prefix parsed, excise that exact span and return the
+ *      parsed rule.
+ *   4. If no prefix parsed, excise only the keyword itself and return
+ *      state='attempted_unresolved'. This prevents the keyword from
+ *      leaking into the title while preserving unrelated title words.
+ *
+ * This approach means "Daily standup at 9am" finds keyword="daily",
+ * tries ["daily"] → parses ✓, tries ["daily","standup"] → fails, stops
+ * at the single word. So "daily" alone is excised, leaving
+ * "standup at 9am" for downstream extractors. The title becomes
+ * "standup" and the time becomes 9am — both correct.
+ */
+function extractRecurrence(lower: string, original: string): RecurrenceResult {
+  const keywordPattern = RECURRENCE_KEYWORDS.join('|');
+  const keywordRe = new RegExp(`\\b(${keywordPattern})\\b`);
+  const keywordMatch = keywordRe.exec(lower);
+
+  if (!keywordMatch) {
+    return { rule: null, state: 'none', lowerRemainder: lower, originalRemainder: original };
   }
-  return false;
+
+  const phraseStart = keywordMatch.index;
+
+  // Enumerate word boundaries AFTER the keyword so we can try prefixes
+  // of increasing length. Each candidate end index is the position of a
+  // whitespace-separated word boundary; we cap at a reasonable window
+  // to avoid pathological scans on very long inputs.
+  const MAX_PHRASE_WORDS = 8;
+  const tail = lower.slice(phraseStart);
+
+  // Build candidate end positions. Start with the end of the keyword
+  // itself (shortest candidate = just the keyword), then extend through
+  // up to MAX_PHRASE_WORDS additional words.
+  const candidateEnds: number[] = [];
+  const wordRe = /\s+\S+/g;
+  // Position index in `tail` where the keyword ends.
+  const keywordEndInTail = keywordMatch[0].length;
+  candidateEnds.push(keywordEndInTail);
+  let walked = 0;
+  wordRe.lastIndex = keywordEndInTail;
+  let m: RegExpExecArray | null;
+  while ((m = wordRe.exec(tail)) !== null && walked < MAX_PHRASE_WORDS) {
+    candidateEnds.push(m.index + m[0].length);
+    walked++;
+  }
+
+  // Try candidates longest-first. The first one that parses wins.
+  let bestEnd: number | null = null;
+  let bestRule: RecurrenceRule | null = null;
+  for (let i = candidateEnds.length - 1; i >= 0; i--) {
+    const end = candidateEnds[i];
+    const candidate = tail.slice(0, end).trim();
+    const parsed = parseRecurrence(candidate);
+    if (parsed) {
+      bestEnd = end;
+      bestRule = parsed;
+      break;
+    }
+  }
+
+  if (bestRule !== null && bestEnd !== null) {
+    const phraseEnd = phraseStart + bestEnd;
+    const { lowerRemainder, originalRemainder } = excise(lower, original, phraseStart, phraseEnd);
+    return { rule: bestRule, state: 'parsed', lowerRemainder, originalRemainder };
+  }
+
+  // Nothing parsed. Excise only the keyword itself so it doesn't
+  // pollute the title, and report the unresolved state.
+  const keywordEnd = phraseStart + keywordMatch[0].length;
+  const { lowerRemainder, originalRemainder } = excise(lower, original, phraseStart, keywordEnd);
+  return {
+    rule: null,
+    state: 'attempted_unresolved',
+    lowerRemainder,
+    originalRemainder,
+  };
 }
 
 // --- Attendee extraction ----------------------------------------------------
