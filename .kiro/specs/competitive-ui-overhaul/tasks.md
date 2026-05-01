@@ -237,8 +237,8 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Create test at `src/nlp/__tests__/naturalLanguageParser.test.ts`
     - _Requirements: 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8_
 
-- [ ] 6. Implement the Recurrence NL Parser and Printer
-  - [ ] 6.1 Create the Recurrence NL Parser module
+- [x] 6. Implement the Recurrence NL Parser and Printer
+  - [x] 6.1 Create the Recurrence NL Parser module
     - Create `src/nlp/recurrenceParser.ts` implementing `parseRecurrence(input)` pure function
     - Support: "every day" (DAILY), "every weekday" (WEEKLY;BYDAY=MO,TU,WE,TH,FR), "every week" (WEEKLY), "every 2 weeks" (WEEKLY;INTERVAL=2), "every month" (MONTHLY), "every year" (YEARLY)
     - Support day-specific: "every Monday" (WEEKLY;BYDAY=MO), "every Tuesday and Thursday" (WEEKLY;BYDAY=TU,TH)
@@ -247,13 +247,13 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Return `RecurrenceRule | null` (null if not recognized)
     - _Requirements: 17.1, 17.2, 17.3, 17.4, 17.5_
 
-  - [ ] 6.2 Create the Recurrence NL Printer module
+  - [x] 6.2 Create the Recurrence NL Printer module
     - Create `src/nlp/recurrencePrinter.ts` implementing `printRecurrence(rule: RecurrenceRule)` pure function
     - Convert a structured RecurrenceRule back into a human-readable recurrence expression string
     - Ensure round-trip property: `parseRecurrence(printRecurrence(rule))` produces an equivalent RecurrenceRule
     - _Requirements: 17.6, 17.7_
 
-  - [ ] 6.3 Integrate recurrence parsing into the NL Parser
+  - [x] 6.3 Integrate recurrence parsing into the NL Parser
     - Update `parseNaturalLanguage` to detect recurrence keywords and delegate to `parseRecurrence`
     - When a recurrence keyword is detected AND `parseRecurrence` returns a non-null RecurrenceRule: set `ParsedEvent.recurrence` to the rule and `confidence.recurrence = 'parsed'`
     - When a recurrence keyword is detected BUT `parseRecurrence` returns null: set `ParsedEvent.recurrence = null` and `confidence.recurrence = 'attempted_unresolved'` (Req 17.8 — triggers EventEditor fallback with recurrence section highlighted)
@@ -279,19 +279,19 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Create test at `src/nlp/__tests__/recurrenceParser.test.ts`
     - _Requirements: 17.1, 17.2, 17.3, 17.4, 17.5, 17.8_
 
-- [ ] 7. Checkpoint - Ensure all tests pass
+- [x] 7. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 
-- [ ] 8. Implement the Haptic Feedback Engine
-  - [ ] 8.1 Create the Haptic Feedback Engine module
+- [x] 8. Implement the Haptic Feedback Engine
+  - [x] 8.1 Create the Haptic Feedback Engine module
     - Create `src/ui/haptics/hapticEngine.ts` implementing `createHapticEngine()` and `useHaptics()` hook
     - Map patterns: light → ImpactFeedbackStyle.Light, medium → ImpactFeedbackStyle.Medium, heavy → ImpactFeedbackStyle.Heavy, selection → SelectionFeedback, success → two sequential Light impacts with 100ms gap
     - Fall back to no-op on web (`Platform.OS === 'web'`) and when OS haptics are disabled
     - Create `src/ui/haptics/index.ts` barrel export
     - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 14.6_
 
-  - [ ]* 8.2 Write unit tests for Haptic Feedback Engine
+  - [x]* 8.2 Write unit tests for Haptic Feedback Engine
     - Verify correct expo-haptics API calls for each pattern (light, medium, heavy, selection, success)
     - For `success`, explicitly verify the pattern is two sequential `Haptics.impactAsync(ImpactFeedbackStyle.Light)` calls with a 100ms gap between them — NOT a single `NotificationFeedbackType.Success` call. This is the non-obvious implementation detail required by Req 14.3's "two short light pulses" description.
     - Verify no-op behavior on web platform
@@ -299,14 +299,14 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Create test at `src/ui/haptics/__tests__/hapticEngine.test.ts`
     - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 14.6_
 
-- [ ] 9. Implement Gesture Controllers
-  - [ ] 9.1 Create the Gesture Context Store
+- [x] 9. Implement Gesture Controllers
+  - [x] 9.1 Create the Gesture Context Store
     - Create `src/stores/gestureContextStore.ts` using `createStore` from `zustand/vanilla` (same pattern as existing `syncStatusStore`)
     - Implement `GestureContext` state with `isDragActive`, `activeGesture`, `setActiveGesture`, and `clearActiveGesture`
     - Export `gestureContextStore` (vanilla) and `useGestureContext()` React hook
     - _Requirements: 15.6_
 
-  - [ ] 9.1A Create the Conflict Check Adapter
+  - [x] 9.1A Create the Conflict Check Adapter
     - Create `src/ui/gestures/useConflictCheckAdapter.ts` implementing the `useConflictCheckAdapter(allEvents)` hook
     - Wrap the existing `ConflictDetector` from `src/conflicts/conflictDetector.ts` — use only the synchronous `detectConflicts(event, allEvents)` method (NOT `detectConflictsWithTravel`, which does async travel-time estimation and is unsafe to call on every frame of a pan gesture)
     - Construct a synthetic `CalendarEvent` from the drag's `proposedStart`/`proposedEnd`/`eventId`/`calendarAccountId` fields, invoke `detectConflicts`, then filter out any conflict whose `conflictingEventId` matches the dragged `eventId` (a drag must not conflict with itself)
@@ -314,7 +314,7 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - For event arrays larger than 200 items, pre-index by day bucket on first call and re-index only when `allEvents` reference changes (memoize via `useMemo`)
     - _Requirements: 4.4, 13.5_
 
-  - [ ] 9.1B Create the Conflict Indicator Overlay component
+  - [x] 9.1B Create the Conflict Indicator Overlay component
     - Create `src/ui/calendar/ConflictIndicatorOverlay.tsx` implementing the overlay rendered during drag-to-reschedule and drag-to-resize when the proposed time range conflicts
     - Props: `visible: boolean`, `proposedRect: {x,y,width,height}`, `overlapSlice?: {startY,endY}`, `conflictCount: number`
     - Absolutely-positioned overlay with `pointerEvents="none"` so drag gestures pass through
@@ -331,7 +331,7 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Create test at `src/ui/gestures/__tests__/useConflictCheckAdapter.test.ts`
     - _Requirements: 4.4, 13.5_
 
-  - [ ] 9.2 Create the Drag Reschedule Controller
+  - [x] 9.2 Create the Drag Reschedule Controller
     - Create `src/ui/gestures/useDragReschedule.ts` implementing the `useDragReschedule(config)` hook
     - Compose LongPress (300ms) + Pan gesture from react-native-gesture-handler
     - Implement lift animation (scale 1.03, elevation increase), time indicator snapping to 15-minute increments
@@ -350,7 +350,7 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Create test at `src/ui/gestures/__tests__/useDragReschedule.property.test.ts`
     - **Validates: Requirements 4.5**
 
-  - [ ] 9.4 Create the Drag Resize Controller
+  - [x] 9.4 Create the Drag Resize Controller
     - Create `src/ui/gestures/useDragResize.ts` implementing the `useDragResize(config)` hook
     - Activate on press within bottom 8px of Event_Card
     - Snap to 15-minute increments, enforce minimum 15-minute duration
@@ -361,7 +361,7 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - On activation: set gesture context to 'resize'; on release: clear gesture context
     - _Requirements: 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.7, 14.4_
 
-  - [ ] 9.5 Create the Swipe Navigation Controller
+  - [x] 9.5 Create the Swipe Navigation Controller
     - Create `src/ui/gestures/useSwipeNavigation.ts` implementing the `useSwipeNavigation(config)` hook
     - Require minimum 50px horizontal distance and horizontal velocity > vertical velocity
     - Animate current view sliding out and incoming view sliding in (300ms)
@@ -381,7 +381,7 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Create test at `src/ui/gestures/__tests__/useSwipeNavigation.property.test.ts`
     - **Validates: Requirements 15.6**
 
-  - [ ] 9.8 Create the Pull-to-Refresh Controller
+  - [x] 9.8 Create the Pull-to-Refresh Controller
     - Create `src/ui/gestures/usePullToRefresh.ts` implementing the `usePullToRefresh(config)` hook
     - Trigger sync when pull distance ≥ 80px
     - Show rotating indicator during sync, fade-out on completion (200ms)
@@ -396,7 +396,7 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Create test at `src/ui/gestures/__tests__/usePullToRefresh.property.test.ts`
     - **Validates: Requirements 9.5**
 
-  - [ ] 9.10 Create the Inline Event Creator Controller
+  - [x] 9.10 Create the Inline Event Creator Controller
     - Create `src/ui/gestures/useInlineEventCreator.ts` implementing the `useInlineEventCreator(config)` hook
     - Single click: create 15-min event at clicked slot (snapped to 15-min increments)
     - Click+drag: create event spanning drag range

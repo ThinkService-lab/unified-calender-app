@@ -45,6 +45,17 @@ export {
 } from './syncStatusStore';
 export type { SyncStatusState, AccountSyncInfo } from './syncStatusStore';
 
+// Gesture context store (vanilla)
+export {
+  gestureContextStore,
+  useGestureContext,
+} from './gestureContextStore';
+export type {
+  GestureContext,
+  GestureContextState,
+  ActiveGesture,
+} from './gestureContextStore';
+
 // Subscription store
 export {
   useSubscriptionStore,
