@@ -18,10 +18,13 @@ export function generateCodeVerifier(length: number = 64): string {
     throw new Error('PKCE code verifier length must be between 43 and 128');
   }
 
-  // Rejection sampling: discard random bytes that would cause modulo bias.
-  // The largest multiple of charsetLength that fits in a byte (0-255).
+  // Rejection sampling: the largest multiple of charsetLength (66) that fits
+  // in a byte is 198 (= 256 - (256 % 66)). Bytes >= 198 are discarded so every
+  // accepted byte maps uniformly to the 66-character PKCE charset.
+  // Security Review 2026-05-02: Finding M5 — corrected the misleading
+  // arithmetic in the previous comment (it said 264/252; actual is 198).
   const charsetLength = PKCE_CHARSET.length; // 66
-  const limit = 256 - (256 % charsetLength);  // 264 wraps to 252 for 66 chars → limit = 252
+  const limit = 256 - (256 % charsetLength); // 198 for 66 chars
 
   const result: string[] = [];
   while (result.length < length) {

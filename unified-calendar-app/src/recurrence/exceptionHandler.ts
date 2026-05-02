@@ -14,6 +14,8 @@
 
 import type { CalendarEvent } from '../types/models';
 import { expandRecurrenceRule, type DateRange } from './expandRecurrenceRule';
+// Security Review 2026-05-02: Finding M6 — replaced Math.random() ID with crypto
+import { cryptoId } from '../utils/cryptoId';
 
 /**
  * Result of creating a recurrence exception.
@@ -28,10 +30,14 @@ export interface RecurrenceExceptionResult {
 }
 
 /**
- * Generate a simple unique ID for exception events.
+ * Generate a unique ID for exception events.
+ * Security Review 2026-05-02: Finding M6 — uses crypto.getRandomValues()
+ * for the random portion to avoid collisions and predictable IDs.
+ * Output format matches the previous `{timestamp}-{random}` shape so no
+ * downstream parsers need to change.
  */
 function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  return cryptoId();
 }
 
 /**

@@ -4,7 +4,8 @@
  */
 
 import { open, type DB } from '@op-engineering/op-sqlite';
-import type { DatabaseDriver, DatabaseConfig } from './database';
+import type { DatabaseDriver, DatabaseConfig, TransactionContext } from './database';
+import { executeTransaction } from './database';
 
 /**
  * Creates an Android SQLite database driver backed by op-sqlite.
@@ -18,7 +19,7 @@ export function createDatabaseDriver(config: DatabaseConfig): DatabaseDriver {
 
   let isDbOpen = true;
 
-  return {
+  const driver: DatabaseDriver = {
     async execute(sql: string, params?: unknown[]): Promise<void> {
       db.execute(sql, params as any[]);
     },
@@ -26,7 +27,15 @@ export function createDatabaseDriver(config: DatabaseConfig): DatabaseDriver {
     async query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
       const result = db.execute(sql, params as any[]);
       // op-sqlite v15+ returns { rows: Array } directly
-      return (result.rows ?? []) as T[];
+      return ((result as unknown as { rows?: T[] }).rows ?? []) as T[];
+    },
+
+    supportsTransactions: true,
+
+    // Security Review 2026-05-02: Finding H8 — transaction support via
+    // executeTransaction helper (BEGIN / COMMIT / ROLLBACK).
+    async transaction<T>(fn: (tx: TransactionContext) => Promise<T>): Promise<T> {
+      return executeTransaction(driver, fn);
     },
 
     async close(): Promise<void> {
@@ -38,4 +47,6 @@ export function createDatabaseDriver(config: DatabaseConfig): DatabaseDriver {
       return isDbOpen;
     },
   };
+
+  return driver;
 }

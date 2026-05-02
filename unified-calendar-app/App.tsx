@@ -285,6 +285,16 @@ function createInMemoryDb(): DatabaseDriver {
 
     async close(): Promise<void> {},
     isOpen(): boolean { return true; },
+    // Security Review 2026-05-02: Finding H8 — DatabaseDriver now requires
+    // transaction support. The demo in-memory driver has no real atomicity,
+    // so transaction() simply invokes the callback directly. Marked
+    // supportsTransactions = false so any production code that depends on
+    // atomicity can choose to fall back.
+    supportsTransactions: false,
+    async transaction<T>(fn: (tx: { execute: (sql: string, params?: unknown[]) => Promise<void>; query: <R = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<R[]> }) => Promise<T>): Promise<T> {
+      // eslint-disable-next-line @typescript-eslint/no-use-before-define
+      return fn({ execute: this.execute.bind(this), query: this.query.bind(this) });
+    },
   };
 }
 

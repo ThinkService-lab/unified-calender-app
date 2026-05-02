@@ -392,6 +392,11 @@ export function createMicrosoftGraphAxios(config: ProviderAxiosConfig): AxiosIns
 /**
  * Create a secure Axios instance for a CalDAV server.
  * Base URL: configurable (must be https://).
+ *
+ * Security Review 2026-05-02: Finding H9 — the return value of
+ * addAllowedProviderDomain is now honored so blocked domains (e.g., a
+ * phishing target dressed up as a CalDAV server) fail fast instead of
+ * silently producing an instance whose data is always redacted.
  */
 export function createCalDAVAxios(config: CalDAVAxiosConfig): AxiosInstance {
   const { serverUrl, ...providerConfig } = config;
@@ -404,10 +409,20 @@ export function createCalDAVAxios(config: CalDAVAxiosConfig): AxiosInstance {
     );
   }
 
-  // Dynamically add the CalDAV server domain to allowed providers
+  // Dynamically add the CalDAV server domain to allowed providers.
+  // Rejection must abort instance creation rather than silently proceed.
   const hostname = extractHostname(serverUrl);
-  if (hostname) {
-    addAllowedProviderDomain(hostname);
+  if (!hostname) {
+    throw new Error(
+      `Invalid CalDAV server URL: cannot extract hostname from ${serverUrl}`
+    );
+  }
+  const added = addAllowedProviderDomain(hostname);
+  if (!added) {
+    throw new Error(
+      `CalDAV server domain "${hostname}" is not permitted. ` +
+      'The domain matches a known non-CalDAV provider or is otherwise invalid.'
+    );
   }
 
   return createSecureProviderAxios(serverUrl, providerConfig);

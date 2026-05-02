@@ -14,6 +14,8 @@ import type {
   RefreshToken,
 } from './types';
 import { BaseCalendarAdapter } from './baseAdapter';
+// Security Review 2026-05-02: Finding H7 — replaced Math.random() UID with crypto
+import { cryptoUUID } from '../utils/cryptoId';
 
 /** Default polling interval: 5 minutes (300,000 ms) */
 const DEFAULT_POLLING_INTERVAL_MS = 300_000;
@@ -478,10 +480,14 @@ function normalizeColor(color: string): string {
 }
 
 /** Generate a simple UID for new events */
+/**
+ * Generate a globally unique UID for a new CalDAV event (RFC 5545 UID).
+ * Security Review 2026-05-02: Finding H7 — replaced Math.random() with
+ * crypto.randomUUID() to eliminate cross-server collision and
+ * predictable-UID spoofing risks.
+ */
 function generateUID(): string {
-  const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).slice(2, 10);
-  return `${timestamp}-${random}@unified-calendar`;
+  return `${cryptoUUID()}@unified-calendar`;
 }
 
 /** Build a minimal iCalendar string for PUT operations */

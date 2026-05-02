@@ -13,6 +13,10 @@
 import type { DatabaseDriver } from '../db/database';
 import type { SyncEngine, LocalChange } from '../sync/types';
 import type { CalendarEvent, VisibilityLevel } from '../types/models';
+// Security Review 2026-05-02: Finding C3 — replaced Math.random() UUID with crypto
+import { cryptoUUID } from '../utils/cryptoId';
+// Security Review 2026-05-02: Finding H6 — dedup to shared safe event mapper
+import { mapRowToEvent } from '../utils/eventMapper';
 
 /**
  * Interface for the in-memory events store.
@@ -86,15 +90,12 @@ export interface EventCRUDServiceConfig {
 }
 
 /**
- * Generate a UUID v4 compliant ID.
- * Design doc specifies CalendarEvent.id as UUID.
+ * Generate a UUID v4 compliant ID using crypto.randomUUID().
+ * Security Review 2026-05-02: Finding C3 — replaced Math.random() with
+ * cryptographically secure UUID generation.
  */
 function generateUUID(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
+  return cryptoUUID();
 }
 
 export interface EventCRUDService {
@@ -509,40 +510,5 @@ export function createEventCRUDService(config: EventCRUDServiceConfig): EventCRU
   };
 }
 
-/**
- * Maps a raw database row to a CalendarEvent object.
- */
-function mapRowToEvent(row: Record<string, unknown>): CalendarEvent {
-  return {
-    id: row.id as string,
-    providerEventId: (row.provider_event_id as string) ?? '',
-    calendarAccountId: row.calendar_account_id as string,
-    title: row.title as string,
-    description: (row.description as string) ?? null,
-    location: (row.location as string) ?? null,
-    startTime: new Date(row.start_time as number),
-    endTime: new Date(row.end_time as number),
-    timeZone: (row.time_zone as string) ?? 'UTC',
-    isAllDay: (row.is_all_day as number) === 1,
-    recurrenceRule: row.recurrence_rule ? JSON.parse(row.recurrence_rule as string) : null,
-    recurrenceExceptionDate: row.recurrence_exception_date
-      ? new Date(row.recurrence_exception_date as number)
-      : null,
-    parentRecurringEventId: (row.parent_recurring_event_id as string) ?? null,
-    organizer: row.organizer ? JSON.parse(row.organizer as string) : null,
-    attendees: row.attendees ? JSON.parse(row.attendees as string) : [],
-    sequence: (row.sequence as number) ?? 0,
-    dtstamp: new Date(row.dtstamp as number),
-    status: (row.status as CalendarEvent['status']) ?? 'confirmed',
-    visibility: (row.visibility_override as CalendarEvent['visibility']) ?? null,
-    opaqueFields: row.opaque_fields
-      ? new Map(Object.entries(JSON.parse(row.opaque_fields as string)))
-      : new Map(),
-    syncStatus: (row.sync_status as CalendarEvent['syncStatus']) ?? 'synced',
-    localVersion: (row.local_version as number) ?? 1,
-    remoteEtag: (row.remote_etag as string) ?? null,
-    modifiedBy: (row.modified_by as string) ?? null,
-    createdAt: new Date(row.created_at as number),
-    updatedAt: new Date(row.updated_at as number),
-  };
-}
+// Security Review 2026-05-02: Finding H6 — mapRowToEvent moved to
+// '../utils/eventMapper' (safe JSON parsing). Imported at top of file.

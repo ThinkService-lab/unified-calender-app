@@ -12,6 +12,8 @@
 
 import type { DatabaseDriver } from '../db/database';
 import type { AuthEvent, DeletionReceipt } from '../types';
+// Security Review 2026-05-02: Finding C4 — replaced Math.random() UUID with crypto
+import { cryptoUUID } from '../utils/cryptoId';
 
 /** Maximum days for server-side data deletion */
 const MAX_DELETION_DAYS = 30;
@@ -63,13 +65,8 @@ export interface UserDataService {
   getDeletionStatus(userId: string): Promise<DeletionStatus>;
 }
 
-function generateUUID(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
+// Security Review 2026-05-02: Finding C4 — use cryptoUUID() from utils/cryptoId
+// for deletion receipt IDs. Local Math.random() generator removed.
 
 export interface UserDataServiceConfig {
   db: DatabaseDriver;
@@ -236,7 +233,7 @@ export function createUserDataService(
     );
 
     // Step 2: Record deletion request for server-side processing
-    const deletionId = generateUUID();
+    const deletionId = cryptoUUID();
     await db.execute(
       `INSERT INTO deletion_requests (id, user_id, requested_at, scheduled_completion_at, status)
        VALUES (?, ?, ?, ?, ?)`,

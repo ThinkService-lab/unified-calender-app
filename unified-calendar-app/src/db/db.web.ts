@@ -4,7 +4,8 @@
  */
 
 import initSqlJs, { type Database } from 'sql.js';
-import type { DatabaseDriver, DatabaseConfig } from './database';
+import type { DatabaseDriver, DatabaseConfig, TransactionContext } from './database';
+import { executeTransaction } from './database';
 
 /**
  * Creates a Web SQLite database driver backed by sql.js.
@@ -17,7 +18,7 @@ export async function createDatabaseDriver(_config: DatabaseConfig): Promise<Dat
 
   let isDbOpen = true;
 
-  return {
+  const driver: DatabaseDriver = {
     async execute(sql: string, params?: unknown[]): Promise<void> {
       db.run(sql, params as any[]);
     },
@@ -37,6 +38,14 @@ export async function createDatabaseDriver(_config: DatabaseConfig): Promise<Dat
       return results;
     },
 
+    supportsTransactions: true,
+
+    // Security Review 2026-05-02: Finding H8 — implement transaction support
+    // via the shared executeTransaction helper (BEGIN / COMMIT / ROLLBACK).
+    async transaction<T>(fn: (tx: TransactionContext) => Promise<T>): Promise<T> {
+      return executeTransaction(driver, fn);
+    },
+
     async close(): Promise<void> {
       db.close();
       isDbOpen = false;
@@ -46,4 +55,6 @@ export async function createDatabaseDriver(_config: DatabaseConfig): Promise<Dat
       return isDbOpen;
     },
   };
+
+  return driver;
 }

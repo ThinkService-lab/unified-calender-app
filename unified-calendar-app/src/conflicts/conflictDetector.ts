@@ -100,8 +100,18 @@ export function createConflictDetector(): ConflictDetector {
   /** Track known conflict pairs to avoid re-reporting in continuous scanning */
   let knownConflictPairs: Set<string> = new Set();
   let conflictIdCounter = 0;
-  /** Instance-unique seed to avoid ID collisions across detector instances */
-  const instanceSeed = Math.random().toString(36).slice(2, 8);
+  /**
+   * Instance-unique seed to avoid ID collisions across detector instances.
+   * Security Review 2026-05-02: Finding L5 — replaced Math.random() with a
+   * crypto-random 4-byte hex seed.
+   */
+  const instanceSeed = (() => {
+    const bytes = new Uint8Array(4);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes)
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  })();
 
   function generateConflictId(): string {
     return `conflict-${instanceSeed}-${Date.now()}-${++conflictIdCounter}`;
