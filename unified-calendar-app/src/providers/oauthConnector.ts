@@ -10,16 +10,32 @@ const PKCE_CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345
 
 /**
  * Generate a cryptographically random PKCE code verifier (43-128 chars).
+ * Uses rejection sampling to eliminate modulo bias.
+ * Security Review 2026-05-01: Finding H1
  */
 export function generateCodeVerifier(length: number = 64): string {
   if (length < 43 || length > 128) {
     throw new Error('PKCE code verifier length must be between 43 and 128');
   }
-  const randomValues = new Uint8Array(length);
-  crypto.getRandomValues(randomValues);
-  return Array.from(randomValues)
-    .map((v) => PKCE_CHARSET[v % PKCE_CHARSET.length])
-    .join('');
+
+  // Rejection sampling: discard random bytes that would cause modulo bias.
+  // The largest multiple of charsetLength that fits in a byte (0-255).
+  const charsetLength = PKCE_CHARSET.length; // 66
+  const limit = 256 - (256 % charsetLength);  // 264 wraps to 252 for 66 chars → limit = 252
+
+  const result: string[] = [];
+  while (result.length < length) {
+    const randomValues = new Uint8Array(length - result.length + 10); // over-allocate slightly
+    crypto.getRandomValues(randomValues);
+    for (let i = 0; i < randomValues.length && result.length < length; i++) {
+      if (randomValues[i] < limit) {
+        result.push(PKCE_CHARSET[randomValues[i] % charsetLength]);
+      }
+      // else: discard biased byte, try next
+    }
+  }
+
+  return result.join('');
 }
 
 /**

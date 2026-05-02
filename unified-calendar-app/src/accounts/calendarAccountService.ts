@@ -66,17 +66,8 @@ export interface CalendarAccountServiceConfig {
   canConnectAccount?: (userId: string) => Promise<boolean>;
 }
 
-/**
- * Generate a UUID v4 compliant ID.
- * Design doc specifies CalendarAccount.id as UUID.
- */
-function generateUUID(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
+// Security Review 2026-05-01: Finding H2 — replaced Math.random() UUID with crypto
+import { cryptoUUID } from '../utils/cryptoId';
 
 export interface CalendarAccountService {
   connectAccount(input: ConnectAccountInput): Promise<AccountResult>;
@@ -136,7 +127,7 @@ export function createCalendarAccountService(
       }
     }
 
-    const accountId = generateUUID();
+    const accountId = cryptoUUID();
 
     try {
       // Step 1: Run OAuth flow via the provider adapter

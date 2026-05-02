@@ -91,19 +91,13 @@ export function createProviderAxios(options: AxiosFactoryOptions): AxiosInstance
     headers: { 'Content-Type': 'application/json' },
   });
 
-  /** Flag to prevent infinite refresh loops */
-  let isRefreshing = false;
-  /** Queue of requests waiting for token refresh */
-  let refreshSubscribers: Array<(token: string) => void> = [];
-
-  function onTokenRefreshed(newToken: string): void {
-    refreshSubscribers.forEach((cb) => cb(newToken));
-    refreshSubscribers = [];
-  }
-
-  function addRefreshSubscriber(cb: (token: string) => void): void {
-    refreshSubscribers.push(cb);
-  }
+  /**
+   * Security Review 2026-05-01: Finding H4 — Promise-based lock replaces
+   * boolean flag to prevent race conditions in concurrent 401 handling.
+   * When multiple requests get 401 simultaneously, only one refresh is
+   * initiated. All others await the same Promise.
+   */
+  let refreshPromise: Promise<string> | null = null;
 
   // Request interceptor: attach access token
   instance.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
@@ -160,33 +154,33 @@ export function createProviderAxios(options: AxiosFactoryOptions): AxiosInstance
         return Promise.reject(error);
       }
 
-      // Prevent retry loops — only retry once
+      // Prevent retry loops — only retry once per request
       if ((originalRequest as unknown as Record<string, unknown>)._retried) {
         return Promise.reject(error);
       }
       (originalRequest as unknown as Record<string, unknown>)._retried = true;
 
-      if (!isRefreshing) {
-        isRefreshing = true;
-        try {
-          const newAuth = await oauthConnector.refreshAccessToken(refreshTokenInfo);
-          await oauthConnector.storeTokens(accountId, newAuth);
-          isRefreshing = false;
-          onTokenRefreshed(newAuth.accessToken);
-        } catch (refreshError) {
-          isRefreshing = false;
-          refreshSubscribers = [];
-          return Promise.reject(refreshError);
-        }
+      // Promise-based deduplication: if a refresh is already in flight,
+      // all concurrent 401 handlers await the same promise.
+      if (!refreshPromise) {
+        refreshPromise = (async () => {
+          try {
+            const newAuth = await oauthConnector.refreshAccessToken(refreshTokenInfo);
+            await oauthConnector.storeTokens(accountId, newAuth);
+            return newAuth.accessToken;
+          } finally {
+            refreshPromise = null;
+          }
+        })();
       }
 
-      // Wait for the refresh to complete, then retry
-      return new Promise((resolve) => {
-        addRefreshSubscriber((newToken: string) => {
-          originalRequest.headers.Authorization = `Bearer ${newToken}`;
-          resolve(instance(originalRequest));
-        });
-      });
+      try {
+        const newToken = await refreshPromise;
+        originalRequest.headers.Authorization = `Bearer ${newToken}`;
+        return instance(originalRequest);
+      } catch (refreshError) {
+        return Promise.reject(refreshError);
+      }
     },
   );
 

@@ -174,13 +174,31 @@ export function createWebSocketManager(
   }
 
   /**
+   * Validate that a parsed message is a valid EventChangedMessage.
+   * Security Review 2026-05-01: Finding M2
+   */
+  function isValidEventChangedMessage(message: unknown): message is EventChangedMessage {
+    if (typeof message !== 'object' || message === null) return false;
+    const msg = message as Record<string, unknown>;
+    return (
+      msg.type === 'event_changed' &&
+      typeof msg.accountId === 'string' &&
+      msg.accountId.length > 0 &&
+      typeof msg.changeType === 'string' &&
+      ['created', 'updated', 'deleted', 'sync'].includes(msg.changeType as string) &&
+      (msg.syncToken === undefined || typeof msg.syncToken === 'string')
+    );
+  }
+
+  /**
    * Handle an inbound message from the WebSocket server.
+   * Security Review 2026-05-01: Finding M2 — validates message structure before processing.
    */
   function handleMessage(data: string): void {
     try {
       const message = JSON.parse(data);
 
-      if (message.type === 'event_changed') {
+      if (isValidEventChangedMessage(message)) {
         const payload: WebhookPayload = {
           accountId: message.accountId,
           changeType: message.changeType,
@@ -191,7 +209,7 @@ export function createWebSocketManager(
           // Non-fatal: sync engine will retry on next poll/notification
         });
       }
-      // Other message types (pong, ack, etc.) are silently ignored
+      // Other message types (pong, ack, etc.) and invalid messages are silently ignored
     } catch {
       // Malformed JSON — ignore silently
     }
