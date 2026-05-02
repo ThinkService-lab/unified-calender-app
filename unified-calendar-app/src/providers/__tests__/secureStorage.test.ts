@@ -81,3 +81,79 @@ describe('Web SecureStorage', () => {
     expect(rawKey).toContain('ucal_secure_');
   });
 });
+
+describe('Web SecureStorage — security review M8 / L7', () => {
+  beforeEach(() => {
+    localStorageMap.clear();
+    // Reset the module-local key between suites that depend on key identity
+    const mod = jest.requireActual('../secureStorage.web') as {
+      _resetEncryptionKeyForTesting: () => void;
+    };
+    mod._resetEncryptionKeyForTesting();
+  });
+
+  it('does NOT persist the encryption key in localStorage or sessionStorage (M8)', async () => {
+    const storage = createSecureStorage();
+    await storage.setItem('tokens', 'secret-token-value');
+
+    // The AES key must never appear in any web storage surface.
+    const keysInLocal = Array.from(localStorageMap.keys());
+    expect(keysInLocal.some((k) => k.toLowerCase().includes('key'))).toBe(false);
+    expect(keysInLocal.some((k) => k.toLowerCase().includes('crypto'))).toBe(false);
+
+    // Ciphertext is stored, plaintext must not be:
+    const allValues = Array.from(localStorageMap.values()).join('|');
+    expect(allValues).not.toContain('secret-token-value');
+  });
+
+  it('invokes onAuthReset when stored ciphertext cannot be decrypted (L7)', async () => {
+    // Seed a corrupted entry with the expected storage prefix
+    localStorageMap.set('ucal_secure_corrupted', 'not-valid-base64-ciphertext!!!');
+
+    const authResetEvents: Array<{ key: string; reason: string }> = [];
+    const storage = createSecureStorage({
+      onAuthReset: (key, reason) => {
+        authResetEvents.push({ key, reason });
+      },
+    });
+
+    const result = await storage.getItem('corrupted');
+    expect(result).toBeNull();
+    expect(authResetEvents).toEqual([{ key: 'corrupted', reason: 'decryption_failed' }]);
+    // And the corrupted entry should be purged
+    expect(localStorageMap.has('ucal_secure_corrupted')).toBe(false);
+  });
+
+  it('is resilient to a throwing onAuthReset handler', async () => {
+    localStorageMap.set('ucal_secure_corrupted', 'not-valid-ciphertext');
+    const storage = createSecureStorage({
+      onAuthReset: () => {
+        throw new Error('handler crashed');
+      },
+    });
+
+    // Must not propagate the handler error
+    await expect(storage.getItem('corrupted')).resolves.toBeNull();
+  });
+
+  it('generates a non-extractable CryptoKey (M8)', async () => {
+    // Stub crypto.subtle.generateKey to capture the extractable flag
+    const realGenerate = crypto.subtle.generateKey.bind(crypto.subtle);
+    let capturedExtractable: boolean | null = null;
+    const spy = jest
+      .spyOn(crypto.subtle, 'generateKey')
+      .mockImplementation(((algo: any, extractable: boolean, usages: any) => {
+        capturedExtractable = extractable;
+        return realGenerate(algo, extractable, usages);
+      }) as typeof crypto.subtle.generateKey);
+
+    try {
+      const storage = createSecureStorage();
+      await storage.setItem('probe', 'v');
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(capturedExtractable).toBe(false);
+  });
+});

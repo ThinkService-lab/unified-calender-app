@@ -33,6 +33,7 @@ import type { CalendarEvent, CalendarAccount } from '../types/models';
 import type { Feature } from '../types/subscription';
 import type { PlatformNotificationHandler } from '../notifications/types';
 import type { QueryClient } from '@tanstack/react-query';
+import type { TokenExpiryProvider } from '../providers/cachedTokenHealth';
 
 // ── Configuration ──────────────────────────────────────────────────────
 
@@ -51,6 +52,24 @@ export interface AppBootstrapConfig {
   createWebSocket?: (url: string) => WebSocket;
   /** Optional: Pre-configured provider adapters (for testing or pre-connected accounts) */
   initialAdapters?: Map<string, CalendarProviderAdapter>;
+  /**
+   * Optional: Local token-expiry lookup used by the token-health monitor
+   * to avoid hitting the provider on every poll (Security Review
+   * 2026-05-02 Finding L6). When the caller has access to the
+   * OAuthConnector / SecureStorage, wiring this cuts background provider
+   * calls by ~99% in the common case.
+   */
+  tokenExpiryProvider?: TokenExpiryProvider;
+  /**
+   * Optional: HTTP client for the subscription backend. When omitted, a
+   * placeholder is used that rejects any call — this prevents silent
+   * no-ops from shipping to production (Security Review 2026-05-02
+   * Finding L4 carry-over). Tests that don't exercise the subscription
+   * API path can safely leave it unset.
+   */
+  subscriptionHttpClient?: {
+    post<T>(url: string, body: unknown): Promise<{ data: T }>;
+  };
 }
 
 // ── Wired Application Context ──────────────────────────────────────────
@@ -212,10 +231,25 @@ export async function bootstrapApp(config: AppBootstrapConfig): Promise<AppConte
 
   // ── 8. Create subscription manager and wire feature gating ──
   const { createSubscriptionManager } = await import('../subscription/subscriptionManager');
+  // Security Review 2026-05-02 (pass 3): Finding L4 — the placeholder HTTP
+  // client now rejects instead of silently returning empty data, so any
+  // production build that ships without wiring `subscriptionHttpClient`
+  // fails loudly on first use rather than silently no-oping subscription
+  // lifecycle calls.
+  const subscriptionHttp =
+    config.subscriptionHttpClient ?? {
+      post: async (url: string): Promise<{ data: never }> => {
+        throw new Error(
+          `[appBootstrap] subscriptionHttpClient is not configured — refusing to call ${url}. ` +
+            'Wire an HTTP client before production use. This placeholder exists only so unit tests ' +
+            'that do not exercise the subscription API path can boot the app.',
+        );
+      },
+    };
   const subscriptionManager = createSubscriptionManager({
     db,
     store: stores.subscriptionStore,
-    http: { post: async () => ({ data: {} as any }) }, // Placeholder HTTP client
+    http: subscriptionHttp,
   });
 
   // ── 9. Create privacy layer (with subscription tier gating for advanced privacy, Req 10.2) ──
@@ -245,20 +279,29 @@ export async function bootstrapApp(config: AppBootstrapConfig): Promise<AppConte
   });
 
   // ── 12. Create token health monitor and wire to auth error UX ──
+  // Security Review 2026-05-02 (pass 3): Finding L6 — the health probe
+  // is now wrapped in a cached checker. When a tokenExpiryProvider is
+  // configured, most polls short-circuit on local expiry info; otherwise
+  // the probe result is cached for 5 minutes so repeated polls don't
+  // amplify provider rate-limit pressure.
   const { TokenHealthMonitor } = await import('../providers/tokenHealthMonitor');
+  const { createCachedTokenHealthChecker } = await import('../providers/cachedTokenHealth');
+  const rawHealthProbe = async (accountId: string) => {
+    const adapter = providerAdapters.get(accountId);
+    if (!adapter) return 'unknown' as const;
+    try {
+      await adapter.listCalendars(accountId);
+      return 'valid' as const;
+    } catch {
+      return 'revoked' as const;
+    }
+  };
+  const cachedHealthChecker = createCachedTokenHealthChecker({
+    rawChecker: rawHealthProbe,
+    tokenExpiryProvider: config.tokenExpiryProvider,
+  });
   const tokenHealthMonitor = new TokenHealthMonitor({
-    checkHealth: async (accountId: string) => {
-      // Use the appropriate provider adapter to check token health
-      const adapter = providerAdapters.get(accountId);
-      if (!adapter) return 'unknown';
-      try {
-        // Lightweight call to verify token validity
-        await adapter.listCalendars(accountId);
-        return 'valid';
-      } catch {
-        return 'revoked';
-      }
-    },
+    checkHealth: cachedHealthChecker,
   });
 
   // Wire: TokenHealthMonitor → auth error UX
