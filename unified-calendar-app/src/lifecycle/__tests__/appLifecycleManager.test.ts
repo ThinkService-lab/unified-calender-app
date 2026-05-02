@@ -36,6 +36,8 @@ function createMockDb() {
     query,
     close,
     isOpen,
+    supportsTransactions: false,
+    transaction: jest.fn(),
     executedSql,
     queryResults,
   } as unknown as DatabaseDriver & {

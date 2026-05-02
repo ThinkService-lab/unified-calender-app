@@ -46,6 +46,18 @@ async function createTestDriver(): Promise<DatabaseDriver & { rawDb: Database }>
     isOpen(): boolean {
       return isDbOpen;
     },
+    supportsTransactions: true,
+    async transaction<T>(fn: (tx: { execute: DatabaseDriver['execute']; query: DatabaseDriver['query'] }) => Promise<T>): Promise<T> {
+      db.run('BEGIN TRANSACTION');
+      try {
+        const result = await fn({ execute: driver.execute, query: driver.query });
+        db.run('COMMIT');
+        return result;
+      } catch (error) {
+        db.run('ROLLBACK');
+        throw error;
+      }
+    },
   };
 
   return driver;

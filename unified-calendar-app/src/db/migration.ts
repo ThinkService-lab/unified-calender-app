@@ -402,7 +402,7 @@ export class MigrationRunner {
  * and rejects all write operations. Used as fallback when migration fails.
  */
 export function createReadOnlyDriver(driver: DatabaseDriver): DatabaseDriver {
-  return {
+  const readOnly: DatabaseDriver = {
     async execute(sql: string, params?: unknown[]): Promise<void> {
       const normalized = sql.trim().toUpperCase();
       if (
@@ -429,5 +429,12 @@ export function createReadOnlyDriver(driver: DatabaseDriver): DatabaseDriver {
     isOpen(): boolean {
       return driver.isOpen();
     },
+    supportsTransactions: false,
+    async transaction<T>(): Promise<T> {
+      throw new Error(
+        'Database is in read-only mode due to a migration failure. Transactions are not available.'
+      );
+    },
   };
+  return readOnly;
 }

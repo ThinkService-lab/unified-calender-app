@@ -72,6 +72,10 @@ function createInMemoryDb(): DatabaseDriver {
 
     async close(): Promise<void> {},
     isOpen(): boolean { return true; },
+    supportsTransactions: false,
+    async transaction<T>(fn: (tx: any) => Promise<T>): Promise<T> {
+      return fn({ execute: this.execute.bind(this), query: this.query.bind(this) });
+    },
   };
 }
 
@@ -188,6 +192,8 @@ describe('App onboarding wiring (Task 18.9)', () => {
         async query(): Promise<never[]> { throw new Error('DB read failed'); },
         async close(): Promise<void> {},
         isOpen(): boolean { return false; },
+        supportsTransactions: false,
+        async transaction<T>(): Promise<T> { throw new Error('DB transaction failed'); },
       };
 
       const failingManager = createOnboardingManager({ db: failingDb });

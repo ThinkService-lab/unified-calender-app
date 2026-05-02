@@ -4,8 +4,8 @@
  */
 
 export { SCHEMA_VERSION, CREATE_TABLES_SQL, CREATE_INDEXES_SQL, getSchemaSQL } from './schema';
-export { initializeSchema, getSchemaVersion, verifySchema } from './database';
-export type { DatabaseDriver, DatabaseConfig } from './database';
+export { initializeSchema, getSchemaVersion, verifySchema, executeTransaction } from './database';
+export type { DatabaseDriver, DatabaseConfig, TransactionContext } from './database';
 export { encrypt, decrypt, deriveEncryptionKey, AES_CONFIG } from './encryption';
 export type { EncryptedData } from './encryption';
 export { MigrationRunner, createReadOnlyDriver } from './migration';

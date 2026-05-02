@@ -30,6 +30,8 @@ function createMockDriver(): DatabaseDriver & { data: Record<string, string> } {
     query: mockQuery as DatabaseDriver['query'],
     close: jest.fn(async () => {}),
     isOpen: jest.fn(() => true),
+    supportsTransactions: false,
+    transaction: jest.fn(),
   };
 }
 

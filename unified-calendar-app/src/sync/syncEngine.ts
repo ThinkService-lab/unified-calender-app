@@ -338,6 +338,9 @@ export function createSyncEngine(config: SyncEngineConfig): SyncEngine {
   /**
    * Apply inbound changes from a provider to the local database.
    * Returns any conflicts detected.
+   *
+   * All database writes are wrapped in a transaction for atomicity —
+   * a crash mid-operation won't leave the database in an inconsistent state.
    */
   async function applyInboundChanges(
     accountId: string,
@@ -345,99 +348,108 @@ export function createSyncEngine(config: SyncEngineConfig): SyncEngine {
   ): Promise<SyncConflict[]> {
     const detectedConflicts: SyncConflict[] = [];
 
-    // Process created events
-    // Security Review 2026-05-01: Finding M1 — use actual provider data instead of placeholders
-    for (const created of changes.created) {
-      const providerEventId = created.id ?? generateId();
-      const now = Date.now();
-      const eventId = generateId();
+    const applyFn = async (tx: { execute: typeof db.execute; query: typeof db.query }) => {
+      // Process created events
+      // Security Review 2026-05-01: Finding M1 — use actual provider data instead of placeholders
+      for (const created of changes.created) {
+        const providerEventId = created.id ?? generateId();
+        const now = Date.now();
+        const eventId = generateId();
 
-      // Extract actual event data from provider response when available
-      const pd = created.providerData ?? {};
-      const title = (typeof pd.title === 'string' ? pd.title : null)
-        ?? (typeof pd.summary === 'string' ? pd.summary : null)
-        ?? (typeof pd.subject === 'string' ? pd.subject : null)
-        ?? 'Untitled Event';
-      const description = typeof pd.description === 'string' ? pd.description : null;
-      const location = typeof pd.location === 'string' ? pd.location : null;
-      const startTime = typeof pd.startTime === 'number' ? pd.startTime
-        : (pd.start && typeof (pd.start as Record<string, unknown>).dateTime === 'string'
-          ? new Date((pd.start as Record<string, unknown>).dateTime as string).getTime()
-          : now);
-      const endTime = typeof pd.endTime === 'number' ? pd.endTime
-        : (pd.end && typeof (pd.end as Record<string, unknown>).dateTime === 'string'
-          ? new Date((pd.end as Record<string, unknown>).dateTime as string).getTime()
-          : startTime + 3600000);
-      const timeZone = typeof pd.timeZone === 'string' ? pd.timeZone : 'UTC';
-      const isAllDay = pd.isAllDay === true ? 1 : 0;
+        // Extract actual event data from provider response when available
+        const pd = created.providerData ?? {};
+        const title = (typeof pd.title === 'string' ? pd.title : null)
+          ?? (typeof pd.summary === 'string' ? pd.summary : null)
+          ?? (typeof pd.subject === 'string' ? pd.subject : null)
+          ?? 'Untitled Event';
+        const description = typeof pd.description === 'string' ? pd.description : null;
+        const location = typeof pd.location === 'string' ? pd.location : null;
+        const startTime = typeof pd.startTime === 'number' ? pd.startTime
+          : (pd.start && typeof (pd.start as Record<string, unknown>).dateTime === 'string'
+            ? new Date((pd.start as Record<string, unknown>).dateTime as string).getTime()
+            : now);
+        const endTime = typeof pd.endTime === 'number' ? pd.endTime
+          : (pd.end && typeof (pd.end as Record<string, unknown>).dateTime === 'string'
+            ? new Date((pd.end as Record<string, unknown>).dateTime as string).getTime()
+            : startTime + 3600000);
+        const timeZone = typeof pd.timeZone === 'string' ? pd.timeZone : 'UTC';
+        const isAllDay = pd.isAllDay === true ? 1 : 0;
 
-      await db.execute(
-        `INSERT OR IGNORE INTO events (id, provider_event_id, calendar_account_id, title, description, location, start_time, end_time, time_zone, is_all_day, sequence, dtstamp, sync_status, local_version, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          eventId,
-          providerEventId,
-          accountId,
-          title,
-          description,
-          location,
-          startTime,
-          endTime,
-          timeZone,
-          isAllDay,
-          0,
-          now,
-          'synced',
-          1,
-          now,
-          now,
-        ],
-      );
-    }
-
-    // Process updated events — check for conflicts
-    for (const updated of changes.updated) {
-      if (!updated.id) continue;
-
-      const existing = await db.query<{
-        id: string;
-        sync_status: string;
-        local_version: number;
-      }>(
-        `SELECT id, sync_status, local_version FROM events WHERE provider_event_id = ? AND calendar_account_id = ?`,
-        [updated.id, accountId],
-      );
-
-      if (existing.length > 0 && existing[0].sync_status.startsWith('pending_')) {
-        // Conflict: local pending change + remote change
-        detectedConflicts.push({
-          id: generateId(),
-          eventId: existing[0].id,
-          calendarAccountId: accountId,
-          localVersion: JSON.stringify({ syncStatus: existing[0].sync_status }),
-          remoteVersion: JSON.stringify(updated.providerData ?? {}),
-          detectedAt: new Date(),
-        });
-
-        await db.execute(
-          `UPDATE events SET sync_status = 'conflict' WHERE id = ?`,
-          [existing[0].id],
-        );
-      } else if (existing.length > 0) {
-        // No conflict — apply remote update
-        await db.execute(
-          `UPDATE events SET sync_status = 'synced', updated_at = ? WHERE id = ?`,
-          [Date.now(), existing[0].id],
+        await tx.execute(
+          `INSERT OR IGNORE INTO events (id, provider_event_id, calendar_account_id, title, description, location, start_time, end_time, time_zone, is_all_day, sequence, dtstamp, sync_status, local_version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            eventId,
+            providerEventId,
+            accountId,
+            title,
+            description,
+            location,
+            startTime,
+            endTime,
+            timeZone,
+            isAllDay,
+            0,
+            now,
+            'synced',
+            1,
+            now,
+            now,
+          ],
         );
       }
-    }
 
-    // Process deleted events
-    for (const deletedId of changes.deleted) {
-      await db.execute(
-        `DELETE FROM events WHERE provider_event_id = ? AND calendar_account_id = ?`,
-        [deletedId, accountId],
-      );
+      // Process updated events — check for conflicts
+      for (const updated of changes.updated) {
+        if (!updated.id) continue;
+
+        const existing = await tx.query<{
+          id: string;
+          sync_status: string;
+          local_version: number;
+        }>(
+          `SELECT id, sync_status, local_version FROM events WHERE provider_event_id = ? AND calendar_account_id = ?`,
+          [updated.id, accountId],
+        );
+
+        if (existing.length > 0 && existing[0].sync_status.startsWith('pending_')) {
+          // Conflict: local pending change + remote change
+          detectedConflicts.push({
+            id: generateId(),
+            eventId: existing[0].id,
+            calendarAccountId: accountId,
+            localVersion: JSON.stringify({ syncStatus: existing[0].sync_status }),
+            remoteVersion: JSON.stringify(updated.providerData ?? {}),
+            detectedAt: new Date(),
+          });
+
+          await tx.execute(
+            `UPDATE events SET sync_status = 'conflict' WHERE id = ?`,
+            [existing[0].id],
+          );
+        } else if (existing.length > 0) {
+          // No conflict — apply remote update
+          await tx.execute(
+            `UPDATE events SET sync_status = 'synced', updated_at = ? WHERE id = ?`,
+            [Date.now(), existing[0].id],
+          );
+        }
+      }
+
+      // Process deleted events
+      for (const deletedId of changes.deleted) {
+        await tx.execute(
+          `DELETE FROM events WHERE provider_event_id = ? AND calendar_account_id = ?`,
+          [deletedId, accountId],
+        );
+      }
+    };
+
+    // Use transaction if the driver supports it, otherwise fall back to sequential execution
+    if (db.supportsTransactions) {
+      await db.transaction(async (tx) => applyFn(tx));
+    } else {
+      await applyFn(db);
     }
 
     return detectedConflicts;

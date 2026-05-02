@@ -22,6 +22,7 @@ import type {
   PushToken,
   NotificationPreferences,
 } from './types';
+import { cryptoId } from '../utils/cryptoId';
 
 /** Dependencies injected into the NotificationService */
 export interface NotificationServiceDeps {
@@ -103,17 +104,9 @@ export interface NotificationService {
   teardown(): void;
 }
 
-let notificationIdCounter = 0;
-
-/** Generates a unique notification ID */
+/** Generates a unique notification ID using cryptographically secure randomness */
 export function generateNotificationId(): string {
-  notificationIdCounter += 1;
-  return `notif-${Date.now()}-${notificationIdCounter}`;
-}
-
-/** Reset the ID counter (for testing) */
-export function resetNotificationIdCounter(): void {
-  notificationIdCounter = 0;
+  return `notif-${cryptoId()}`;
 }
 
 /**

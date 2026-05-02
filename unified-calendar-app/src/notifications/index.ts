@@ -33,7 +33,6 @@ export {
   createNotificationService,
   buildPrivacyAwarePayload,
   generateNotificationId,
-  resetNotificationIdCounter,
 } from './notificationService';
 export type {
   NotificationService,

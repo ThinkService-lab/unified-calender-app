@@ -143,6 +143,13 @@ export async function bootstrapApp(config: AppBootstrapConfig): Promise<AppConte
     },
   });
 
+  // ── 3b. Initialize TanStack Query hooks with service dependencies ──
+  // This must happen after the QueryClient is created but before any
+  // React components mount, so the hooks have access to db and syncEngine.
+  const { initCalendarQueries } = await import('../queries/calendarQueries');
+  // Note: syncEngine is created in step 6 below — we defer the init call
+  // until after step 6 completes. See "Wire query hooks" below.
+
   // ── 4. Create error display service (needed by other services for error reporting) ──
   const { createErrorStore } = await import('../errors/errorStore');
   const errorStore = createErrorStore();
@@ -186,6 +193,9 @@ export async function bootstrapApp(config: AppBootstrapConfig): Promise<AppConte
   // ── 7. Create conflict detector and wire to sync engine + notifications ──
   const { createConflictDetector } = await import('../conflicts/conflictDetector');
   const conflictDetector = createConflictDetector();
+
+  // ── 7b. Wire TanStack Query hooks (deferred from step 3b) ──
+  initCalendarQueries({ db, syncEngine });
 
   // Track notified conflict pairs to prevent O(n²) notification spam
   const notifiedConflictPairs = new Set<string>();

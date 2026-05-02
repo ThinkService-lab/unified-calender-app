@@ -61,6 +61,8 @@ function createMockDb(): DatabaseDriver {
     query: jest.fn().mockResolvedValue([]),
     close: jest.fn().mockResolvedValue(undefined),
     isOpen: jest.fn().mockReturnValue(true),
+    supportsTransactions: false,
+    transaction: jest.fn(),
   };
 }
 

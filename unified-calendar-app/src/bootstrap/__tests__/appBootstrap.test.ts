@@ -108,6 +108,11 @@ function createMockDb(): DatabaseDriver {
     isOpen(): boolean {
       return _isOpen;
     },
+
+    supportsTransactions: false,
+    async transaction<T>(fn: (tx: any) => Promise<T>): Promise<T> {
+      return fn({ execute: this.execute.bind(this), query: this.query.bind(this) });
+    },
   };
 }
 

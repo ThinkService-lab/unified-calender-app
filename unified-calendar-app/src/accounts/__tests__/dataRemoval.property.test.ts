@@ -86,6 +86,10 @@ function createInMemoryDb() {
     },
     async close(): Promise<void> {},
     isOpen(): boolean { return true; },
+    supportsTransactions: false,
+    async transaction<T>(fn: (tx: any) => Promise<T>): Promise<T> {
+      return fn({ execute: db.execute.bind(db), query: db.query.bind(db) });
+    },
   };
 
   return { db, tables };

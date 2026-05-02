@@ -15,10 +15,34 @@ export interface DatabaseDriver {
   execute(sql: string, params?: unknown[]): Promise<void>;
   /** Execute a SQL query that returns rows */
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+  /**
+   * Execute a set of operations within a single SQLite transaction.
+   *
+   * All statements executed via the callback's `execute`/`query` methods
+   * are wrapped in BEGIN/COMMIT. If the callback throws, the transaction
+   * is rolled back automatically.
+   *
+   * Platform drivers that do not yet support transactions may fall back
+   * to executing statements sequentially (no atomicity guarantee). The
+   * `supportsTransactions` flag indicates whether true transaction
+   * support is available.
+   */
+  transaction<T>(fn: (tx: TransactionContext) => Promise<T>): Promise<T>;
+  /** Whether the driver supports true atomic transactions */
+  readonly supportsTransactions: boolean;
   /** Close the database connection */
   close(): Promise<void>;
   /** Whether the database connection is open */
   isOpen(): boolean;
+}
+
+/**
+ * Context passed to the `transaction` callback.
+ * Provides the same execute/query interface scoped to the active transaction.
+ */
+export interface TransactionContext {
+  execute(sql: string, params?: unknown[]): Promise<void>;
+  query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
 }
 
 /**
@@ -103,4 +127,32 @@ export async function verifySchema(driver: DatabaseDriver): Promise<boolean> {
   const tableNames = rows.map((r) => r.name);
 
   return expectedTables.every((t) => tableNames.includes(t));
+}
+
+/**
+ * Creates a default `transaction` implementation for drivers that support
+ * manual BEGIN/COMMIT/ROLLBACK. Platform drivers can use this helper or
+ * provide their own native transaction support.
+ *
+ * Wraps the callback in BEGIN TRANSACTION / COMMIT, rolling back on error.
+ */
+export async function executeTransaction<T>(
+  driver: Pick<DatabaseDriver, 'execute' | 'query'>,
+  fn: (tx: TransactionContext) => Promise<T>,
+): Promise<T> {
+  const tx: TransactionContext = {
+    execute: (sql, params) => driver.execute(sql, params),
+    query: <R = Record<string, unknown>>(sql: string, params?: unknown[]) =>
+      driver.query<R>(sql, params),
+  };
+
+  await driver.execute('BEGIN TRANSACTION');
+  try {
+    const result = await fn(tx);
+    await driver.execute('COMMIT');
+    return result;
+  } catch (error) {
+    await driver.execute('ROLLBACK');
+    throw error;
+  }
 }

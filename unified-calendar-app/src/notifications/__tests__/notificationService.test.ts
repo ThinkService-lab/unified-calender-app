@@ -6,7 +6,6 @@
 import {
   createNotificationService,
   buildPrivacyAwarePayload,
-  resetNotificationIdCounter,
 } from '../notificationService';
 import type { NotificationServiceDeps } from '../notificationService';
 import type {
@@ -101,7 +100,7 @@ function createMockDeps(
 }
 
 beforeEach(() => {
-  resetNotificationIdCounter();
+  // No counter reset needed — notification IDs now use cryptoId()
 });
 
 describe('NotificationService', () => {
