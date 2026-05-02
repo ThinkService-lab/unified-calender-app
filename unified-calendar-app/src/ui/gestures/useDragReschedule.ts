@@ -37,15 +37,20 @@
  * Without `activateAfterLongPress`, simultaneous composition would let
  * the pan fire immediately on first touch, defeating Req 4.1.
  *
- * ─── Error handling ──────────────────────────────────────────────────────────
+ * ─── Error handling (Task 10A.2) ──────────────────────────────────────────────
  *
- * This task only covers the happy path. `onReschedule` rejections propagate
- * to the consumer — Task 10A.2 will add try/catch + spring-back + banner.
+ * `onReschedule` is wrapped in a try/catch. On persist failure the hook:
+ *   1. Reverts the event to its original position via a spring-back animation.
+ *   2. Exposes an `error` field (`string | null`) that the caller can feed
+ *      into an `<AutoDismissBanner />` to display "Couldn't reschedule —
+ *      try again."
+ *   3. Clears the error when a new drag starts or when the caller resets it.
+ *
  * We always clear the gesture context store's `activeGesture` on pan end
  * (success or failure) so the gesture-context invariants in Property 13 hold.
  */
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
 import type { ComposedGesture } from 'react-native-gesture-handler';
 import {
@@ -62,6 +67,8 @@ import type { ViewStyle } from 'react-native';
 import { useAnimation } from '../animation/animationEngine';
 import { useHaptics } from '../haptics/hapticEngine';
 import { useTokens } from '../tokens';
+import { useScreenReaderAnnouncement } from '../accessibility/useAccessibility';
+import { buildConflictAccessibilityLabel } from '../calendar/conflictAccessibilityLabel';
 import { gestureContextStore } from '../../stores/gestureContextStore';
 import {
   minutesToY,
@@ -92,11 +99,21 @@ export interface DragRescheduleConfig {
   visibleDayDates: Date[];
   /** Callback to update event times — Req 4.3, 4.7. */
   onReschedule: (eventId: string, newStart: Date, newEnd: Date) => Promise<void>;
-  /** Callback to check conflicts at proposed time — Req 4.4. */
+  /**
+   * Callback to check conflicts at proposed time — Req 4.4.
+   *
+   * Task 9.12 (Option A): `calendarAccountId` is forwarded so the
+   * downstream adapter can apply account-scoped filtering if / when
+   * `ConflictDetector` adds that semantic. The existing detector does
+   * not filter by account today, but aligning the controller contract
+   * with the adapter's four-argument `check(...)` signature removes a
+   * class of silent caller-side mistakes.
+   */
   onConflictCheck: (
     eventId: string,
     newStart: Date,
     newEnd: Date,
+    calendarAccountId: string,
   ) => ConflictCheckResult;
 }
 
@@ -108,6 +125,12 @@ export interface DragRescheduleConfig {
 export interface DragRescheduleActiveEvent {
   /** Unique id of the event being dragged. */
   eventId: string;
+  /**
+   * Calendar-account id of the event being dragged (Task 9.12).
+   * Forwarded to `onConflictCheck` on every snap change so the adapter
+   * can run account-scoped filtering if required.
+   */
+  calendarAccountId: string;
   /** Start timestamp of the event prior to the drag. */
   startTime: Date;
   /** End timestamp of the event prior to the drag. */
@@ -146,6 +169,17 @@ export interface UseDragRescheduleReturn {
   animatedStyle: AnimatedStyle<ViewStyle>;
   /** Animated style for a floating time-indicator that follows the drag vertically. */
   timeIndicatorStyle: AnimatedStyle<ViewStyle>;
+  /**
+   * Error message from a failed `onReschedule` persist. `null` when there
+   * is no error. Consumers should render an `<AutoDismissBanner message={error} />`
+   * and pass `clearError` as the `onDismiss` callback.
+   *
+   * Cleared automatically when a new drag starts.
+   * (Task 10A.2 — Req 4.3, 4.7)
+   */
+  error: string | null;
+  /** Imperatively clear the error (e.g. after the banner auto-dismisses). */
+  clearError: () => void;
 }
 
 // ─── Internal constants ───────────────────────────────────────────────────────
@@ -170,6 +204,31 @@ export function useDragReschedule(
   const { shouldAnimate, springConfig } = useAnimation();
   const haptics = useHaptics();
   const tokens = useTokens();
+  const { announce } = useScreenReaderAnnouncement();
+
+  // ── Error state (Task 10A.2) ──────────────────────────────────────────────
+  //
+  // Tracks the most recent persist failure message. Cleared when a new
+  // drag starts or when the caller invokes `clearError` (typically wired
+  // to the AutoDismissBanner's `onDismiss`).
+  const [error, setError] = useState<string | null>(null);
+
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
+
+  // Edge-tracking ref for conflict-state transitions (Task 9.11 / Req 4.4).
+  //
+  // The JS-side `handleSnapChange` callback fires on every snap-point change
+  // — which is roughly every 15-minute grid crossing, not every frame — so
+  // we can safely compare against this ref to detect the rising and falling
+  // edges of `hasConflict`. Announcements only fire on edge transitions so
+  // screen-reader users are not bombarded with updates mid-drag.
+  //
+  // Reset to `false` on gesture end so the next drag starts from a known
+  // clean state (both the success `handleDrop` path and the spring-back /
+  // cancellation paths flush this via `markDragEndedJS`).
+  const prevHasConflictRef = useRef(false);
 
   // ── Shared values (UI-thread state) ───────────────────────────────────────
   //
@@ -286,7 +345,27 @@ export function useDragReschedule(
         activeEvent.eventId,
         proposedStart,
         proposedEnd,
+        activeEvent.calendarAccountId,
       );
+
+      // Task 9.11 / Req 4.4: announce conflict state transitions to
+      // screen readers on the rising / falling edge only. `handleSnapChange`
+      // is already throttled to snap-point changes (every 15-minute grid
+      // crossing), so this is NOT an every-frame announcement.
+      const nowHasConflict = conflictResult.hasConflict;
+      if (nowHasConflict !== prevHasConflictRef.current) {
+        if (nowHasConflict) {
+          announce(
+            buildConflictAccessibilityLabel(
+              conflictResult.conflictingEventIds.length,
+            ),
+            'polite',
+          );
+        } else {
+          announce('No conflict', 'polite');
+        }
+        prevHasConflictRef.current = nowHasConflict;
+      }
 
       stateRef.current.isDragging = true;
       stateRef.current.draggedEventId = activeEvent.eventId;
@@ -298,17 +377,17 @@ export function useDragReschedule(
       stateRef.current.proposedEnd = proposedEnd;
       stateRef.current.hasConflict = conflictResult.hasConflict;
     },
-    [activeEvent, config, stateRef],
+    [activeEvent, config, stateRef, announce],
   );
 
   /**
    * Called from the worklet on pan end when the drop is inside the valid
    * grid. Invokes `onReschedule` and fires the success haptic.
    *
-   * Error handling is deferred to Task 10A.2 — we deliberately do NOT
-   * wrap in try/catch here. The promise rejection propagates to any
-   * consumer that awaits it, and we still reset the gesture context in
-   * the .finally block so the invariant in Property 13 is preserved.
+   * Task 10A.2: wrapped in try/catch. On persist failure the event
+   * springs back to its original position and an error message is
+   * surfaced via the `error` return field for the caller to render
+   * in an `<AutoDismissBanner />`.
    */
   const handleDrop = useCallback(
     (proposedStartMin: number, proposedEndMin: number, columnIndex: number) => {
@@ -339,17 +418,31 @@ export function useDragReschedule(
       // gets immediate tactile confirmation of the drop (Req 14.2).
       triggerLightHaptic();
 
-      // Kick off the persist. We intentionally do not await — the worklet
-      // does not need to block on this, and any caller that needs to know
-      // when persistence settles can observe the event via the store.
-      void config
-        .onReschedule(activeEvent.eventId, proposedStart, proposedEnd)
-        .finally(() => {
+      // Kick off the persist with error handling (Task 10A.2).
+      const doPersist = async () => {
+        try {
+          await config.onReschedule(activeEvent.eventId, proposedStart, proposedEnd);
+        } catch {
+          // Task 10A.2: spring-back to original position on persist failure.
+          if (shouldAnimate) {
+            translationY.value = withSpring(0, springConfig);
+            translationX.value = withSpring(0, springConfig);
+          } else {
+            translationY.value = 0;
+            translationX.value = 0;
+          }
+
+          // Surface the error for the caller to render in an AutoDismissBanner.
+          setError("Couldn't reschedule \u2014 try again.");
+        } finally {
           stateRef.current.isDragging = false;
           stateRef.current.draggedEventId = null;
-        });
+        }
+      };
+
+      void doPersist();
     },
-    [activeEvent, config, stateRef, triggerLightHaptic],
+    [activeEvent, config, stateRef, triggerLightHaptic, shouldAnimate, springConfig, translationY, translationX],
   );
 
   // ── Gesture composition ───────────────────────────────────────────────────
@@ -364,6 +457,10 @@ export function useDragReschedule(
       .onStart(() => {
         'worklet';
         if (!activeEvent) return;
+
+        // Task 10A.2: clear any previous persist-failure error when a
+        // new drag starts so the banner dismisses.
+        runOnJS(clearError)();
 
         // Req 4.1: lift the event — unless reduced motion is active
         // (Req 4.6), in which case we apply only a border highlight and
@@ -587,6 +684,7 @@ export function useDragReschedule(
     triggerMediumHaptic,
     setRescheduleContext,
     clearRescheduleContext,
+    clearError,
     handleSnapChange,
     handleDrop,
     // Shared values are stable across renders so they don't need to be in
@@ -669,8 +767,11 @@ export function useDragReschedule(
     () => isDraggingShared.value,
     (isDragging) => {
       if (!isDragging) {
-        // Clear the JS-side state snapshot when the drag ends.
-        runOnJS(markDragEndedJS)(stateRef);
+        // Clear the JS-side state snapshot AND the conflict-edge tracker
+        // when the drag ends. Resetting `prevHasConflictRef` ensures the
+        // next drag starts from a known clean state so the first entry
+        // into conflict on the new drag fires its announcement correctly.
+        runOnJS(markDragEndedJS)(stateRef, prevHasConflictRef);
       }
     },
     [stateRef],
@@ -681,6 +782,8 @@ export function useDragReschedule(
     state: stateRef.current,
     animatedStyle,
     timeIndicatorStyle,
+    error,
+    clearError,
   };
 }
 
@@ -698,7 +801,10 @@ function clamp(value: number, lo: number, hi: number): number {
 }
 
 /** JS-thread helper that resets transient drag fields on the state snapshot. */
-function markDragEndedJS(stateRef: { current: DragRescheduleState }): void {
+function markDragEndedJS(
+  stateRef: { current: DragRescheduleState },
+  prevHasConflictRef?: { current: boolean },
+): void {
   stateRef.current.isDragging = false;
   stateRef.current.draggedEventId = null;
   stateRef.current.translationX = 0;
@@ -707,6 +813,12 @@ function markDragEndedJS(stateRef: { current: DragRescheduleState }): void {
   stateRef.current.proposedStart = null;
   stateRef.current.proposedEnd = null;
   stateRef.current.hasConflict = false;
+  // Task 9.11: reset the conflict-edge tracker so the next drag starts
+  // from a known clean state. The argument is optional so pre-9.11
+  // callers (if any) continue to compile.
+  if (prevHasConflictRef !== undefined) {
+    prevHasConflictRef.current = false;
+  }
 }
 
 /**

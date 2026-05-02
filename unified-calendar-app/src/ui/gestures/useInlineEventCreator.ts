@@ -87,15 +87,16 @@
  * { duration: shouldAnimate ? 100 : 0 })`, so reduced-motion users see
  * the overlay appear/disappear instantly (Req 2.5, 7.5).
  *
- * ─── Error handling ──────────────────────────────────────────────────────────
+ * ─── Error handling (Task 10A.4) ────────────────────────────────────────────
  *
- * `config.onCreate` returns a `Promise<void>`. On either fulfilment or
- * rejection the hook resets back to idle (`isPopoverVisible=false`,
- * selected range cleared). This guarantees the popover always closes
- * after submission so a failed create doesn't leave the user stuck in a
- * modal state. Task 10A.4 will layer on a banner / retry affordance for
- * the rejection case — consumers may also attach their own `.catch` on
- * the `onCreate` side if they need mid-flight UX.
+ * `onCreate` is wrapped in a try/catch. On persist failure the hook:
+ *   1. Dismisses the popover and resets state to idle (the user must not
+ *      be trapped in the popover).
+ *   2. Exposes an `error` field (`string | null`) that the caller can feed
+ *      into an `<AutoDismissBanner />` to display "Couldn't create event."
+ *   3. Clears the error when a new inline creation starts (next slot
+ *      press or drag) or when the caller invokes `clearError` (typically
+ *      wired to the AutoDismissBanner's `onDismiss` callback).
  *
  * Requirements: 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7
  */
@@ -152,6 +153,14 @@ export interface InlineCreatorState {
   selectedStart: Date | null;
   /** Selected range end, or `null` when idle. */
   selectedEnd: Date | null;
+  /**
+   * Validation error for the current popover submission, or `null` when
+   * the popover is idle / the last submission was valid. Task 9.16:
+   * empty or whitespace-only titles are rejected with
+   * `'title_required'` so the consumer can render a localized hint
+   * next to the title input without the hook owning user-facing copy.
+   */
+  submitError: 'title_required' | null;
 }
 
 export interface UseInlineEventCreatorReturn {
@@ -174,12 +183,22 @@ export interface UseInlineEventCreatorReturn {
    * `<Animated.View>` with `position: 'absolute'`.
    */
   overlayStyle: AnimatedStyle<ViewStyle>;
+  /**
+   * Error message from a failed `onCreate` persist. `null` when there
+   * is no error. Consumers should render an `<AutoDismissBanner message={error} />`
+   * and pass `clearError` as the `onDismiss` callback.
+   *
+   * Cleared automatically when a new inline creation starts (next slot
+   * press or drag start).
+   * (Task 10A.4 — Req 12.5)
+   */
+  error: string | null;
+  /** Imperatively clear the error (e.g. after the banner auto-dismisses). */
+  clearError: () => void;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-/** Default title used when the user submits the popover with an empty title. */
-const DEFAULT_EVENT_TITLE = 'New Event';
 /** Opacity of the selection highlight overlay when visible. */
 const OVERLAY_ACTIVE_OPACITY = 0.25;
 /** Duration of the overlay fade-in/out in motion-enabled mode (ms). */
@@ -207,7 +226,20 @@ export function useInlineEventCreator(
     isPopoverVisible: false,
     selectedStart: null,
     selectedEnd: null,
+    submitError: null,
   });
+
+  // ── Error state (Task 10A.4) ──────────────────────────────────────────────
+  //
+  // Tracks the most recent persist failure message. Cleared when a new
+  // inline creation starts (slot press or drag start) or when the caller
+  // invokes `clearError` (typically wired to the AutoDismissBanner's
+  // `onDismiss`).
+  const [error, setError] = useState<string | null>(null);
+
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
 
   // ── UI-thread shared values for the overlay ───────────────────────────────
   //
@@ -232,6 +264,15 @@ export function useInlineEventCreator(
   configRef.current = config;
   const shouldAnimateRef = useRef(shouldAnimate);
   shouldAnimateRef.current = shouldAnimate;
+
+  /**
+   * Mirror of `state.isPopoverVisible` as a ref so stable callbacks
+   * can guard against firing while the popover is open without
+   * regenerating their identity on every popover-visibility flip
+   * (Task 9.17). Updated on every render.
+   */
+  const isPopoverVisibleRef = useRef(state.isPopoverVisible);
+  isPopoverVisibleRef.current = state.isPopoverVisible;
 
   /**
    * The date of the day column the active drag started on. Captured at
@@ -301,11 +342,16 @@ export function useInlineEventCreator(
       const selectedStart = buildDateAtMinutes(date, startMin);
       const selectedEnd = buildDateAtMinutes(date, endMin);
 
+      // Task 10A.4: clear any previous persist-failure error when a
+      // new inline creation starts so the banner dismisses.
+      setError(null);
+
       setState({
         isSelecting: false,
         isPopoverVisible: true,
         selectedStart,
         selectedEnd,
+        submitError: null,
       });
       showOverlay(startMin, endMin);
     },
@@ -333,11 +379,16 @@ export function useInlineEventCreator(
       const selectedStart = buildDateAtMinutes(date, startMin);
       const selectedEnd = buildDateAtMinutes(date, endMin);
 
+      // Task 10A.4: clear any previous persist-failure error when a
+      // new inline creation starts so the banner dismisses.
+      setError(null);
+
       setState({
         isSelecting: true,
         isPopoverVisible: false,
         selectedStart,
         selectedEnd,
+        submitError: null,
       });
       showOverlay(startMin, endMin);
     },
@@ -350,9 +401,15 @@ export function useInlineEventCreator(
    * shared value directly (no re-render) and only push the snapped end
    * into React state when the user crosses a 15-minute boundary so the
    * `state.selectedEnd` consumers see matches what the overlay draws.
+   *
+   * Task 9.17: guard against being called while the popover is open.
+   * If a consumer's gesture keeps firing after the popover mounts (e.g.
+   * a misconfigured `Gesture.Exclusive` composition), the overlay would
+   * otherwise silently move while the user is typing.
    */
   const onSlotDragMove = useCallback(
     (y: number) => {
+      if (isPopoverVisibleRef.current) return;
       const startMin = activeDragStartMinutesRef.current;
       const dragDate = activeDragDateRef.current;
       if (startMin === null || dragDate === null) return;
@@ -384,8 +441,19 @@ export function useInlineEventCreator(
   /**
    * Click-drag end: finalise the selection (normalise direction, enforce
    * 15-minute minimum) and open the popover (Req 12.2, 12.4, 12.7).
+   *
+   * Task 9.17: same popover-open guard as `onSlotDragMove` — if the
+   * popover is already open from a previous submit cycle, a stray
+   * drag-end should not re-finalise the selection.
    */
   const onSlotDragEnd = useCallback(() => {
+    if (isPopoverVisibleRef.current) {
+      // Clear any lingering drag bookkeeping defensively.
+      activeDragDateRef.current = null;
+      activeDragStartMinutesRef.current = null;
+      activeDragEndMinutesRef.current = null;
+      return;
+    }
     const dragDate = activeDragDateRef.current;
     const startMinAtPress = activeDragStartMinutesRef.current;
     const endMinAtRelease = activeDragEndMinutesRef.current;
@@ -405,6 +473,7 @@ export function useInlineEventCreator(
         isPopoverVisible: false,
         selectedStart: null,
         selectedEnd: null,
+        submitError: null,
       });
       hideOverlay();
       return;
@@ -439,6 +508,7 @@ export function useInlineEventCreator(
       isPopoverVisible: true,
       selectedStart,
       selectedEnd,
+      submitError: null,
     });
     // Keep the overlay visible at its final range — it stays painted
     // while the popover is open so the user can see the slot they're
@@ -448,8 +518,13 @@ export function useInlineEventCreator(
   }, [hideOverlay, overlayStartMinutes, overlayEndMinutes]);
 
   /**
-   * Submit the popover: invoke `onCreate` and reset to idle regardless
-   * of whether the promise fulfils or rejects (Req 12.5).
+   * Submit the popover: validate the title, invoke `onCreate`, and
+   * reset to idle on success or on `onCreate` rejection (Req 12.5).
+   *
+   * Task 9.16 (Option A): empty or whitespace-only titles are REJECTED.
+   * The popover stays open with `submitError: 'title_required'` so the
+   * consumer can render a localized validation hint next to the input
+   * (all user-facing copy belongs to `i18nService`, not this hook).
    */
   const onPopoverSubmit = useCallback(
     (title: string) => {
@@ -463,24 +538,29 @@ export function useInlineEventCreator(
       }
 
       const trimmedTitle = title.trim();
-      const finalTitle = trimmedTitle.length > 0 ? trimmedTitle : DEFAULT_EVENT_TITLE;
+      if (trimmedTitle.length === 0) {
+        // Task 9.16: reject empty submission, keep popover open so the
+        // user can correct their input. Consumer reads `submitError`
+        // from the returned state to render a localized hint.
+        setState((prev) => ({ ...prev, submitError: 'title_required' }));
+        return;
+      }
 
-      // Reset to idle optimistically — the popover should close immediately
-      // on submit (per Req 12.5's creation flow). Errors surface via the
-      // consumer's own handling (eventual Task 10A.4 banner).
+      // Dismiss the popover immediately on submit (per Req 12.5's creation
+      // flow). The popover MUST close regardless of success or failure so
+      // the user is never trapped in a modal state.
       resetToIdle(setState, hideOverlay);
 
-      // Fire-and-forget. We swallow rejections here so a rejected promise
-      // doesn't bubble up as an "unhandled promise rejection" in the
-      // default case; consumers that care about errors should attach
-      // their own `.catch` on the `onCreate` they pass in, OR rely on
-      // Task 10A.4's banner infrastructure once it lands.
-      void configRef.current
-        .onCreate(startDate, endDate, finalTitle)
-        .catch(() => {
-          // Swallowed — see comment above. The state machine is already
-          // back in the idle state so a failure doesn't trap the user.
-        });
+      // Task 10A.4: wrap onCreate in try/catch. On failure, surface the
+      // error for the caller to render in an AutoDismissBanner.
+      void (async () => {
+        try {
+          await configRef.current.onCreate(startDate, endDate, trimmedTitle);
+        } catch {
+          // Surface the error for the caller to render in an AutoDismissBanner.
+          setError("Couldn't create event.");
+        }
+      })();
     },
     [state.selectedStart, state.selectedEnd, hideOverlay],
   );
@@ -534,6 +614,8 @@ export function useInlineEventCreator(
       onPopoverSubmit,
       onPopoverDismiss,
       overlayStyle,
+      error,
+      clearError,
     }),
     [
       state,
@@ -544,6 +626,8 @@ export function useInlineEventCreator(
       onPopoverSubmit,
       onPopoverDismiss,
       overlayStyle,
+      error,
+      clearError,
     ],
   );
 }
@@ -584,6 +668,7 @@ function resetToIdle(
     isPopoverVisible: false,
     selectedStart: null,
     selectedEnd: null,
+    submitError: null,
   });
   hideOverlay();
 }

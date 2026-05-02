@@ -45,6 +45,32 @@
  * functional, not decorative), consistent with how the other gesture
  * hooks interpret Req 2.5 / Req 4.6.
  *
+ * ─── Caller is responsible for ──────────────────────────────────────────────
+ *
+ * Task 9.20 / Req 9.4: this hook produces an `error: string | null`
+ * field but does NOT render the error banner itself. Callers MUST mount
+ * an `<AutoDismissBanner message={error} />` inside the scrollable
+ * view root, otherwise sync failures are silently swallowed and the
+ * user never sees Req 9.4's "3-second error banner" UX.
+ *
+ *     const { gesture, indicatorStyle, rotationStyle, error } =
+ *         usePullToRefresh({ triggerDistance: 80, onSync, isSyncing });
+ *
+ *     return (
+ *         <GestureDetector gesture={gesture}>
+ *             <View>
+ *                 <AutoDismissBanner message={error} />
+ *                 <Animated.View style={[indicatorStyle, rotationStyle]}>
+ *                     <SyncIcon />
+ *                 </Animated.View>
+ *                 {children}
+ *             </View>
+ *         </GestureDetector>
+ *     );
+ *
+ * Task 18.2's EventCard / calendar-view wiring should include this
+ * mount at the top of each scrollable view's layout.
+ *
  * Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 2.5
  */
 
@@ -55,9 +81,7 @@ import {
   Easing,
   runOnJS,
   useAnimatedStyle,
-  useDerivedValue,
   useSharedValue,
-  withRepeat,
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
@@ -65,6 +89,7 @@ import type { AnimatedStyle } from 'react-native-reanimated';
 import type { ViewStyle } from 'react-native';
 
 import { useAnimation } from '../animation/animationEngine';
+import { usePullToRefreshStyle } from '../animation/microInteractions';
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
@@ -89,13 +114,30 @@ export interface UsePullToRefreshReturn {
   /** Pan gesture to hand to a `<GestureDetector>`. */
   gesture: PanGesture;
   /**
-   * Animated style for a rotating / fading refresh indicator. Composes
-   * rotation (driven by a spinner loop while refreshing), opacity (fades
-   * out 200ms after the sync completes — Req 9.3), and a vertical
-   * translation tied to the raw pull distance so the indicator tracks
-   * the finger during the pull phase.
+   * Animated style carrying the pull-specific transforms only: the
+   * vertical `translateY` that follows the finger during the pull and
+   * the `opacity` fade tied to sync start / completion (Req 9.3).
+   *
+   * Task 9.13: rotation is NOT in this style — it comes from
+   * `rotationStyle` below, which is sourced from the canonical
+   * `usePullToRefreshStyle` in the Micro-Interaction System. Consumers
+   * apply both styles as an array so the indicator composes pull
+   * translation + fade + rotation in one place without this hook
+   * duplicating the Micro-Interaction System's motion tuning.
+   *
+   *     <Animated.View style={[pullStyle, rotationStyle]}>…</Animated.View>
    */
   indicatorStyle: AnimatedStyle<ViewStyle>;
+  /**
+   * Rotation-only style sourced from `usePullToRefreshStyle` in the
+   * Micro-Interaction System. Spins while `isRefreshing || isSyncing`,
+   * settles to 0deg otherwise (Req 9.2, 9.3). Compose with
+   * `indicatorStyle` on the rendered `<Animated.View>`:
+   *
+   *     const { indicatorStyle, rotationStyle } = usePullToRefresh(cfg);
+   *     return <Animated.View style={[indicatorStyle, rotationStyle]}>…</Animated.View>;
+   */
+  rotationStyle: AnimatedStyle<ViewStyle>;
   /**
    * True while the `onSync` promise is pending. Separate from
    * `config.isSyncing` so consumers can distinguish "this hook's own
@@ -116,14 +158,16 @@ export interface UsePullToRefreshReturn {
 /** Trigger threshold (pixels). Fixed per Req 9.1. */
 const TRIGGER_DISTANCE = 80;
 
-/** Indicator rotation period while actively refreshing (ms). */
-const ROTATION_PERIOD_MS = 900;
-
 /** Fade-out duration after a sync completes (ms). Req 9.3. */
 const FADE_OUT_MS = 200;
 
 /** Fade-in duration when the sync starts (matches fade-out for symmetry). */
 const FADE_IN_MS = 200;
+
+// Rotation period / settle are now owned by `usePullToRefreshStyle` in
+// `src/ui/animation/microInteractions.ts` (Task 9.13 / Key Decision #2).
+// If motion tuning changes there, this hook picks up the new values
+// automatically.
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
 
@@ -149,21 +193,29 @@ export function usePullToRefresh(
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Task 9.13 / Key Decision #2: the rotation is owned by the canonical
+  // `usePullToRefreshStyle` in the Micro-Interaction System. We pass it
+  // `isRefreshing || config.isSyncing` so the spinner runs whenever a
+  // sync is in flight — whether this hook fired it or some external
+  // caller (e.g. a background sync) did. The returned style is exposed
+  // verbatim as `rotationStyle` for consumers to compose with
+  // `indicatorStyle`.
+  const rotationStyle = usePullToRefreshStyle(
+    isRefreshing || config.isSyncing,
+  );
+
   // Shared values (UI thread).
   //
   // - `translationY`: raw vertical translation driven by the pan handler.
   //   Used to move the indicator with the finger during the pull.
-  // - `rotation`: current rotation angle (deg). Loops while refreshing,
-  //   settles to 0 when the refresh completes.
   // - `opacity`: indicator opacity. Fades in on sync start, fades out
   //   200ms after sync completes.
   // - `isRefreshingShared`: mirror of the JS-side `isRefreshing` flag so
   //   the pan `.onEnd` worklet can short-circuit additional pulls
   //   without a JS bridge.
   // - `isSyncingExternalShared`: mirror of `config.isSyncing` for the
-  //   same reason. Updated via `useDerivedValue` below.
+  //   same reason.
   const translationY = useSharedValue(0);
-  const rotation = useSharedValue(0);
   const opacity = useSharedValue(0);
   const isRefreshingShared = useSharedValue(false);
   const isSyncingExternalShared = useSharedValue(config.isSyncing);
@@ -202,22 +254,14 @@ export function usePullToRefresh(
 
     setIsRefreshing(true);
 
-    // Indicator: fade in to full opacity, then start the rotation loop.
+    // Fade the indicator in. Rotation is driven separately by the
+    // canonical `usePullToRefreshStyle` in the Micro-Interaction System
+    // (Task 9.13) — it reacts to `isRefreshing || isSyncing` and starts
+    // spinning on its own.
     opacity.value = withTiming(1, {
       duration: shouldAnimate ? FADE_IN_MS : 0,
       easing: Easing.out(Easing.cubic),
     });
-    if (shouldAnimate) {
-      rotation.value = 0;
-      rotation.value = withRepeat(
-        withTiming(360, {
-          duration: ROTATION_PERIOD_MS,
-          easing: Easing.linear,
-        }),
-        -1,
-        false,
-      );
-    }
 
     // Kick off the sync and wire up the completion path. We use the
     // returned promise so consumers that wrap this hook in an
@@ -238,14 +282,11 @@ export function usePullToRefresh(
         setError(message);
       })
       .finally(() => {
-        // Regardless of outcome: stop the rotation loop, fade the
-        // indicator out, and settle the pull translation back to rest
-        // so the next pull starts from a clean state.
+        // Regardless of outcome: fade the indicator out and settle the
+        // pull translation back to rest so the next pull starts from a
+        // clean state. The rotation spin-down is handled automatically
+        // by `usePullToRefreshStyle` when `isRefreshing` flips false.
         if (shouldAnimate) {
-          rotation.value = withTiming(0, {
-            duration: FADE_OUT_MS,
-            easing: Easing.out(Easing.cubic),
-          });
           opacity.value = withTiming(0, {
             duration: FADE_OUT_MS,
             easing: Easing.out(Easing.cubic),
@@ -256,7 +297,6 @@ export function usePullToRefresh(
             mass: 1,
           });
         } else {
-          rotation.value = 0;
           opacity.value = 0;
           translationY.value = 0;
         }
@@ -266,7 +306,6 @@ export function usePullToRefresh(
     config,
     isRefreshing,
     opacity,
-    rotation,
     shouldAnimate,
     translationY,
   ]);
@@ -354,26 +393,24 @@ export function usePullToRefresh(
   // ── Animated style ───────────────────────────────────────────────────────
 
   /**
-   * Build the rotation string inside a worklet-friendly derived value so
-   * we don't allocate a fresh template-literal on every frame inside the
-   * animated style itself.
+   * Pull-specific animated style. Carries only the vertical translation
+   * (finger-tracked pull) and opacity (sync-start/complete fade). The
+   * rotation transform lives in `rotationStyle`, returned separately so
+   * consumers can compose the two on the rendered `<Animated.View>`
+   * (see `UsePullToRefreshReturn.indicatorStyle` docblock).
    */
-  const rotateDeg = useDerivedValue(() => `${rotation.value}deg`);
-
   const indicatorStyle = useAnimatedStyle(() => {
     'worklet';
     return {
       opacity: opacity.value,
-      transform: [
-        { translateY: translationY.value },
-        { rotate: rotateDeg.value },
-      ],
+      transform: [{ translateY: translationY.value }],
     };
   });
 
   return {
     gesture,
     indicatorStyle,
+    rotationStyle,
     isRefreshing,
     error,
   };

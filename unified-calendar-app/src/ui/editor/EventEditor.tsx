@@ -14,7 +14,7 @@
  * Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 7.2, 7.3
  */
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -23,8 +23,11 @@ import {
   TouchableOpacity,
   ScrollView,
   Switch,
+  Animated,
 } from 'react-native';
 import type { CalendarEvent, CalendarAccount, Attendee, TimeSlot } from '../../types';
+import { useTokens } from '../tokens/designTokens';
+import { useAnimation } from '../animation/animationEngine';
 import {
   RecurrenceSelector,
   defaultRecurrenceConfig,
@@ -66,6 +69,20 @@ export interface EventEditorProps {
   onDelete?: (eventId: string, deleteAll: boolean) => void;
   /** Called when the user cancels */
   onCancel: () => void;
+  /**
+   * Partial form data to seed the editor in 'create' mode.
+   * Shallow-merged over createDefaultForm defaults so provided fields win
+   * but missing fields fall back to defaults.
+   * Ignored when mode is 'edit'. (Req 5.8)
+   */
+  initialValues?: Partial<EventFormData>;
+  /**
+   * When true, visually highlights the recurrence section with a 400ms
+   * border color transition from tokens.colors.warning to tokens.colors.border
+   * (static border when reduced motion) and scrolls the recurrence section
+   * into view on mount. (Req 17.8)
+   */
+  highlightRecurrenceSection?: boolean;
 }
 
 export function EventEditor({
@@ -77,21 +94,46 @@ export function EventEditor({
   onSave,
   onDelete,
   onCancel,
+  initialValues,
+  highlightRecurrenceSection,
 }: EventEditorProps) {
   const activeAccounts = useMemo(() => getActiveAccounts(accounts), [accounts]);
+  const tokens = useTokens();
+  const { shouldAnimate } = useAnimation();
+
+  // Ref for the recurrence section — used to scroll into view
+  const recurrenceSectionRef = useRef<View>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
+
+  // Animated border color for recurrence highlight
+  const highlightAnim = useRef(new Animated.Value(0)).current;
 
   // Initialize form data
   const [form, setForm] = useState<EventFormData>(() => {
     if (mode === 'edit' && event) {
       return createFormFromEvent(event);
     }
-    return createDefaultForm(activeAccounts[0]?.id);
+    const defaults = createDefaultForm(activeAccounts[0]?.id);
+    if (mode === 'create' && initialValues) {
+      return { ...defaults, ...initialValues };
+    }
+    return defaults;
   });
 
   // Recurrence config (synced with form)
   const [recurrenceConfig, setRecurrenceConfig] = useState<RecurrenceConfig>(() => {
     if (mode === 'edit' && event?.recurrenceRule) {
       return recurrenceConfigFromRule(event.recurrenceRule);
+    }
+    // When initialValues provides recurrence fields, sync the config
+    if (mode === 'create' && initialValues?.recurrenceFrequency && initialValues.recurrenceFrequency !== 'none') {
+      return {
+        frequency: initialValues.recurrenceFrequency,
+        interval: initialValues.recurrenceInterval ?? 1,
+        endCondition: initialValues.recurrenceEndCondition ?? 'never',
+        count: initialValues.recurrenceCount ?? null,
+        until: initialValues.recurrenceUntil ?? null,
+      };
     }
     return defaultRecurrenceConfig();
   });
@@ -118,6 +160,47 @@ export function EventEditor({
       setConflictResult(result);
     }
   }, [form.startTime, form.endTime, existingEvents, mode, event?.id, form]);
+
+  // Highlight recurrence section on mount when requested
+  useEffect(() => {
+    if (!highlightRecurrenceSection) return;
+
+    // Scroll the recurrence section into view
+    if (recurrenceSectionRef.current && scrollViewRef.current) {
+      // Small delay to ensure layout is complete
+      const timer = setTimeout(() => {
+        recurrenceSectionRef.current?.measureLayout(
+          scrollViewRef.current?.getInnerViewNode?.() ?? (scrollViewRef.current as any),
+          (_x: number, y: number) => {
+            scrollViewRef.current?.scrollTo({ y, animated: shouldAnimate });
+          },
+          () => {
+            // Fallback: just scroll to end if measurement fails
+          },
+        );
+      }, 100);
+
+      // Animate border color: warning → border over 400ms
+      if (shouldAnimate) {
+        Animated.timing(highlightAnim, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: false,
+        }).start();
+      } else {
+        // Reduced motion: set to final state immediately
+        highlightAnim.setValue(1);
+      }
+
+      return () => clearTimeout(timer);
+    }
+  }, [highlightRecurrenceSection, shouldAnimate, highlightAnim]);
+
+  // Interpolated border color for recurrence highlight
+  const recurrenceHighlightBorderColor = highlightAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [tokens.colors.warning, tokens.colors.border],
+  });
 
   // Update form field helper
   const updateField = useCallback(
@@ -243,6 +326,7 @@ export function EventEditor({
 
   return (
     <ScrollView
+      ref={scrollViewRef}
       style={styles.container}
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
@@ -417,10 +501,32 @@ export function EventEditor({
       </View>
 
       {/* Recurrence Selector */}
-      <RecurrenceSelector
-        value={recurrenceConfig}
-        onChange={handleRecurrenceChange}
-      />
+      {highlightRecurrenceSection ? (
+        <Animated.View
+          ref={recurrenceSectionRef as any}
+          style={[
+            styles.recurrenceHighlight,
+            {
+              borderColor: shouldAnimate
+                ? recurrenceHighlightBorderColor
+                : tokens.colors.warning,
+            },
+          ]}
+          testID="recurrence-section-highlight"
+        >
+          <RecurrenceSelector
+            value={recurrenceConfig}
+            onChange={handleRecurrenceChange}
+          />
+        </Animated.View>
+      ) : (
+        <View ref={recurrenceSectionRef}>
+          <RecurrenceSelector
+            value={recurrenceConfig}
+            onChange={handleRecurrenceChange}
+          />
+        </View>
+      )}
 
       {/* Attendees */}
       <View style={styles.fieldGroup}>
@@ -727,5 +833,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
     color: '#D93025',
+  },
+  recurrenceHighlight: {
+    borderWidth: 2,
+    borderRadius: 8,
+    padding: 8,
+    marginBottom: 8,
   },
 });

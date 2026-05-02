@@ -9,3 +9,5 @@ export type { ParsedEvent, RecurrenceParseState } from './naturalLanguageParser'
 export { printEvent } from './naturalLanguagePrinter';
 export { parseRecurrence } from './recurrenceParser';
 export { printRecurrence } from './recurrencePrinter';
+export { parsedEventToFormData } from './parsedEventToFormData';
+export { convertParsedEventToCreateInput } from './convertParsedEvent';

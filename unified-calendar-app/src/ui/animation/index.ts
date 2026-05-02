@@ -44,3 +44,20 @@ export type { AccountVisibilityTransitionState } from './useAccountVisibilityTra
 // Animated event delete trigger
 export { useAnimatedEventDelete } from './useAnimatedEventDelete';
 export type { UseAnimatedEventDeleteReturn } from './useAnimatedEventDelete';
+
+// Animation Error Boundary
+export {
+  AnimationErrorBoundary,
+  AnimationFallbackContext,
+  useAnimationFallback,
+} from './AnimationErrorBoundary';
+export type { AnimationErrorBoundaryProps } from './AnimationErrorBoundary';
+
+// View Transition Animator
+export { ViewTransitionAnimator, useZoomTransition } from './ViewTransitionAnimator';
+export type {
+  ViewTransitionAnimatorProps,
+  ZoomTransitionConfig,
+  ZoomTransitionReturn,
+  AnimatedStyleProp,
+} from './ViewTransitionAnimator';

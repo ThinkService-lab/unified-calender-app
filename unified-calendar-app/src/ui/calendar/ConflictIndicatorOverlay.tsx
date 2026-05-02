@@ -50,6 +50,13 @@ import Animated, {
 
 import { useTokens } from '../tokens';
 import { useAnimation } from '../animation/animationEngine';
+import { buildConflictAccessibilityLabel } from './conflictAccessibilityLabel';
+
+// Re-export so existing imports (`from '../calendar/ConflictIndicatorOverlay'`)
+// keep working. The canonical location is `./conflictAccessibilityLabel` —
+// prefer importing from there directly in new code so tests can reach the
+// pure helper without dragging the JSX + Reanimated runtime along.
+export { buildConflictAccessibilityLabel };
 
 // `withMotion` from the Animation Engine resolves a spring-driven target
 // value that respects `prefers-reduced-motion`. For this overlay we need
@@ -124,16 +131,9 @@ function hexWithAlpha(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${clampedAlpha})`;
 }
 
-/**
- * Build the accessibility label with correct singular/plural grammar.
- * Exported for testing and for parent announcers (Tasks 9.2, 9.4) that
- * want to use the same phrasing for their live-region announcements.
- */
-export function buildConflictAccessibilityLabel(conflictCount: number): string {
-  const safeCount = Math.max(0, Math.floor(conflictCount));
-  const noun = safeCount === 1 ? 'existing event' : 'existing events';
-  return `Conflict with ${safeCount} ${noun}`;
-}
+// `buildConflictAccessibilityLabel` lives in `./conflictAccessibilityLabel`
+// so tests can import it without the JSX + Reanimated runtime. Re-exported
+// above for backward-compatible imports.
 
 // ─── Component ───────────────────────────────────────────────────────────────
 

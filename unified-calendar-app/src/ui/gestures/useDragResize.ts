@@ -63,16 +63,20 @@
  * interactive feedback of the drag itself — see Req 4.6's analogous
  * wording).
  *
- * ─── Error handling ──────────────────────────────────────────────────────────
+ * ─── Error handling (Task 10A.3) ──────────────────────────────────────────────
  *
- * This task only covers the happy path. `onResize` rejections propagate
- * to the consumer. We always clear the gesture context store's
- * `activeGesture` on pan end (success, spring-back, or cancellation)
- * through both `.onEnd()` and `.onFinalize()` so the invariants in
- * Property 13 hold even when the gesture is cancelled mid-drag.
+ * `onResize` is wrapped in a try/catch. On persist failure the hook:
+ *   1. Reverts the event to its original height via a spring-back animation.
+ *   2. Exposes an `error` field (`string | null`) that the caller can feed
+ *      into an `<AutoDismissBanner />` to display "Couldn't resize —
+ *      try again."
+ *   3. Clears the error when a new resize starts or when the caller resets it.
+ *
+ * We always clear the gesture context store's `activeGesture` on pan end
+ * (success or failure) so the gesture-context invariants in Property 13 hold.
  */
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
 import type { PanGesture } from 'react-native-gesture-handler';
 import {
@@ -88,8 +92,11 @@ import type { ViewStyle } from 'react-native';
 
 import { useAnimation } from '../animation/animationEngine';
 import { useTokens } from '../tokens';
+import { useScreenReaderAnnouncement } from '../accessibility/useAccessibility';
+import { buildConflictAccessibilityLabel } from '../calendar/conflictAccessibilityLabel';
 import { gestureContextStore } from '../../stores/gestureContextStore';
 import { snapToIncrement } from '../calendar/timeSlotUtils';
+import { buildProposedEnd, dateToMinutesOfDay } from './dragResizeMath';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -110,8 +117,18 @@ export interface DragResizeConfig {
   maxPersistTime: 200;
   /** Callback to update event end time — Req 13.3, 13.7. */
   onResize: (eventId: string, newEnd: Date) => Promise<void>;
-  /** Callback to check conflicts at proposed end time — Req 13.5. */
-  onConflictCheck: (eventId: string, newEnd: Date) => ConflictCheckResult;
+  /**
+   * Callback to check conflicts at proposed end time — Req 13.5.
+   *
+   * Task 9.12 (Option A): `calendarAccountId` is forwarded so the
+   * downstream adapter can apply account-scoped filtering if required.
+   * Mirrors the `onConflictCheck` shape on `DragRescheduleConfig`.
+   */
+  onConflictCheck: (
+    eventId: string,
+    newEnd: Date,
+    calendarAccountId: string,
+  ) => ConflictCheckResult;
   /**
    * Haptic callback fired at each 15-minute snap-point crossing during the
    * drag — Req 14.4. Typically wired to `haptics.trigger('selection')`.
@@ -128,6 +145,12 @@ export interface DragResizeConfig {
 export interface DragResizeActiveEvent {
   /** Unique id of the event being resized. */
   eventId: string;
+  /**
+   * Calendar-account id of the event being resized (Task 9.12).
+   * Forwarded to `onConflictCheck` on every snap change for parity
+   * with `DragRescheduleActiveEvent`.
+   */
+  calendarAccountId: string;
   /** Start timestamp of the event (fixed during resize — only end moves). */
   startTime: Date;
   /** End timestamp of the event prior to the resize. */
@@ -158,6 +181,17 @@ export interface UseDragResizeReturn {
   animatedStyle: AnimatedStyle<ViewStyle>;
   /** Animated style for the resize handle visual at the bottom edge. */
   handleStyle: AnimatedStyle<ViewStyle>;
+  /**
+   * Error message from a failed `onResize` persist. `null` when there
+   * is no error. Consumers should render an `<AutoDismissBanner message={error} />`
+   * and pass `clearError` as the `onDismiss` callback.
+   *
+   * Cleared automatically when a new resize starts.
+   * (Task 10A.3 — Req 13.3, 13.7)
+   */
+  error: string | null;
+  /** Imperatively clear the error (e.g. after the banner auto-dismisses). */
+  clearError: () => void;
 }
 
 // ─── Internal constants ───────────────────────────────────────────────────────
@@ -182,6 +216,22 @@ export function useDragResize(
 ): UseDragResizeReturn {
   const { shouldAnimate, springConfig } = useAnimation();
   const tokens = useTokens();
+  const { announce } = useScreenReaderAnnouncement();
+
+  // ── Error state (Task 10A.3) ──────────────────────────────────────────────
+  //
+  // Tracks the most recent persist failure message. Cleared when a new
+  // resize starts or when the caller invokes `clearError` (typically wired
+  // to the AutoDismissBanner's `onDismiss`).
+  const [error, setError] = useState<string | null>(null);
+
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
+
+  // Edge-tracking ref for conflict-state transitions (Task 9.11 / Req 13.5).
+  // See the identical pattern + rationale in `useDragReschedule`.
+  const prevHasConflictRef = useRef(false);
 
   // ── Shared values (UI-thread state) ───────────────────────────────────────
   //
@@ -246,21 +296,46 @@ export function useDragResize(
       const conflictResult = config.onConflictCheck(
         activeEvent.eventId,
         proposedEnd,
+        activeEvent.calendarAccountId,
       );
+
+      // Task 9.11 / Req 13.5: announce conflict state transitions to
+      // screen readers on the rising / falling edge only. `handleSnapChange`
+      // is throttled to snap-point changes via the `lastSnappedEndMinutes`
+      // comparison in `.onUpdate`, so this is NOT an every-frame
+      // announcement.
+      const nowHasConflict = conflictResult.hasConflict;
+      if (nowHasConflict !== prevHasConflictRef.current) {
+        if (nowHasConflict) {
+          announce(
+            buildConflictAccessibilityLabel(
+              conflictResult.conflictingEventIds.length,
+            ),
+            'polite',
+          );
+        } else {
+          announce('No conflict', 'polite');
+        }
+        prevHasConflictRef.current = nowHasConflict;
+      }
 
       stateRef.current.isResizing = true;
       stateRef.current.resizingEventId = activeEvent.eventId;
       stateRef.current.proposedEnd = proposedEnd;
       stateRef.current.hasConflict = conflictResult.hasConflict;
     },
-    [activeEvent, config, stateRef],
+    [activeEvent, config, stateRef, announce],
   );
 
   /**
    * Called from the worklet on pan end when the drop satisfies the
-   * 15-minute minimum. Invokes `onResize` — any rejection propagates to
-   * the consumer (error handling is deferred to a later task, same as
-   * the reschedule controller's convention).
+   * 15-minute minimum. Invokes `onResize` — any rejection is caught
+   * and the event springs back to its original height.
+   *
+   * Task 10A.3: wrapped in try/catch. On persist failure the event
+   * height springs back to its original value and an error message is
+   * surfaced via the `error` return field for the caller to render
+   * in an `<AutoDismissBanner />`.
    */
   const handleCommit = useCallback(
     (proposedEndMin: number) => {
@@ -271,13 +346,28 @@ export function useDragResize(
         proposedEndMin,
       );
 
-      // Fire-and-forget: the worklet does not need to block on persistence.
-      void config.onResize(activeEvent.eventId, proposedEnd).finally(() => {
-        stateRef.current.isResizing = false;
-        stateRef.current.resizingEventId = null;
-      });
+      const doPersist = async () => {
+        try {
+          await config.onResize(activeEvent.eventId, proposedEnd);
+        } catch {
+          // Task 10A.3: spring-back to original height on persist failure.
+          if (shouldAnimate) {
+            heightShared.value = withSpring(activeEvent.heightPx, springConfig);
+          } else {
+            heightShared.value = activeEvent.heightPx;
+          }
+
+          // Surface the error for the caller to render in an AutoDismissBanner.
+          setError("Couldn't resize \u2014 try again.");
+        } finally {
+          stateRef.current.isResizing = false;
+          stateRef.current.resizingEventId = null;
+        }
+      };
+
+      void doPersist();
     },
-    [activeEvent, config, stateRef],
+    [activeEvent, config, stateRef, shouldAnimate, springConfig, heightShared],
   );
 
   // ── Gesture construction ──────────────────────────────────────────────────
@@ -330,12 +420,31 @@ export function useDragResize(
         'worklet';
         if (!activeEvent) return;
 
+        // Task 10A.3: clear any previous persist-failure error when a
+        // new resize starts so the banner dismisses.
+        runOnJS(clearError)();
+
         // Seed the shared values for the resize session.
+        //
+        // Task 9.14 / Req 14.4: seed `lastSnappedEndMinutes` and
+        // `proposedEndMinutes` with the SNAPPED value rather than the
+        // raw `initialEndMinutes`. `.onUpdate` compares against the
+        // snapped value, so seeding with the raw end produces a
+        // spurious haptic on the very first frame for any event whose
+        // original end time is not already on a 15-minute grid line
+        // (e.g. 10:07, 14:23). Snapping on seed makes the first-frame
+        // comparison a no-op when the user hasn't moved yet, and still
+        // correctly fires the haptic the moment they cross the next
+        // grid boundary.
+        const snappedInitialEndMin = snapToIncrement(
+          initialEndMinutes,
+          snapIncrement,
+        );
         heightShared.value = eventHeightPx;
         translationY.value = 0;
         isResizingShared.value = true;
-        proposedEndMinutes.value = initialEndMinutes;
-        lastSnappedEndMinutes.value = initialEndMinutes;
+        proposedEndMinutes.value = snappedInitialEndMin;
+        lastSnappedEndMinutes.value = snappedInitialEndMin;
 
         // Req 13.6: skip the handle scale animation under reduced motion.
         if (shouldAnimate) {
@@ -386,14 +495,16 @@ export function useDragResize(
         'worklet';
         if (!activeEvent) return;
 
+        // Task 9.15: `.onUpdate` already clamps `proposedEndMinutes.value`
+        // to `[startMinutes + minimumDuration, MINUTES_PER_DAY - 1]`
+        // (Req 13.4 live clamp), so the value read here is always ≥
+        // `minEndMin`. No revert-to-original branch is required — the
+        // committed height is always valid.
         const snappedEndMin = proposedEndMinutes.value;
-        const minEndMin = startMinutes + minimumDuration;
 
-        if (snappedEndMin >= minEndMin && eventHourHeight > 0) {
-          // Valid resize: spring the height to its final resting value
-          // (it already tracks the snapped end, but `withSpring` gives
-          // the settle animation a subtle visual confirmation) and kick
-          // off the persist callback.
+        if (eventHourHeight > 0) {
+          // Spring the height to its final resting value for a subtle
+          // settle confirmation, then kick off the persist callback.
           const finalDurationMin = snappedEndMin - startMinutes;
           const finalHeight = (finalDurationMin / 60) * eventHourHeight;
 
@@ -404,12 +515,11 @@ export function useDragResize(
           }
           runOnJS(handleCommit)(snappedEndMin);
         } else {
-          // Below minimum: spring back to original height (Req 13.4).
-          if (shouldAnimate) {
-            heightShared.value = withSpring(eventHeightPx, springConfig);
-          } else {
-            heightShared.value = eventHeightPx;
-          }
+          // Defensive fallback: if `eventHourHeight` is somehow ≤ 0
+          // (invalid configuration) we cannot compute a height, so
+          // leave the card at its original pixel dimensions and skip
+          // the persist.
+          heightShared.value = eventHeightPx;
         }
 
         // Reset handle scale and drag bookkeeping either way.
@@ -453,6 +563,7 @@ export function useDragResize(
     springConfig,
     setResizeContext,
     clearResizeContext,
+    clearError,
     handleSnapChange,
     handleCommit,
     triggerSnapHaptic,
@@ -520,7 +631,9 @@ export function useDragResize(
     () => isResizingShared.value,
     (isResizing) => {
       if (!isResizing) {
-        runOnJS(markResizeEndedJS)(stateRef);
+        // Task 9.11: also reset the conflict-edge tracker so the next
+        // resize starts from a known clean state.
+        runOnJS(markResizeEndedJS)(stateRef, prevHasConflictRef);
       }
     },
     [stateRef],
@@ -531,6 +644,8 @@ export function useDragResize(
     state: stateRef.current,
     animatedStyle,
     handleStyle,
+    error,
+    clearError,
   };
 }
 
@@ -547,45 +662,22 @@ function clamp(value: number, lo: number, hi: number): number {
   return value;
 }
 
-/**
- * JS-thread helper: convert a `Date` to minutes-from-midnight using the
- * Date's LOCAL time zone (matching the convention used by the reschedule
- * controller and the timeline renderers).
- */
-function dateToMinutesOfDay(date: Date): number {
-  return date.getHours() * 60 + date.getMinutes();
-}
-
-/**
- * JS-thread helper: build a `Date` representing the proposed end time.
- *
- * We preserve the Y-M-D components from the event's start date (resize
- * never changes the day) and apply the proposed end's H-M. If the
- * proposed end minute value would produce a `Date` at or before the
- * start (which can happen if the snap math tripped against a DST
- * boundary), we roll the end forward by a day so the duration is at
- * least one snap increment.
- */
-function buildProposedEnd(startTime: Date, proposedEndMin: number): Date {
-  const proposedEnd = new Date(startTime);
-  proposedEnd.setHours(
-    Math.floor(proposedEndMin / 60),
-    proposedEndMin % 60,
-    0,
-    0,
-  );
-  if (proposedEnd.getTime() <= startTime.getTime()) {
-    // Extremely rare — DST rollback could momentarily put the end at or
-    // before the start. Roll to the next day to preserve forward motion.
-    proposedEnd.setDate(proposedEnd.getDate() + 1);
-  }
-  return proposedEnd;
-}
+// `dateToMinutesOfDay` and `buildProposedEnd` live in `./dragResizeMath`
+// so they can be unit-tested without pulling in the Reanimated /
+// gesture-handler runtime (Task 9.18). Imported above.
 
 /** JS-thread helper that resets transient resize fields on the state snapshot. */
-function markResizeEndedJS(stateRef: { current: DragResizeState }): void {
+function markResizeEndedJS(
+  stateRef: { current: DragResizeState },
+  prevHasConflictRef?: { current: boolean },
+): void {
   stateRef.current.isResizing = false;
   stateRef.current.resizingEventId = null;
   stateRef.current.proposedEnd = null;
   stateRef.current.hasConflict = false;
+  // Task 9.11: reset the conflict-edge tracker so the next resize starts
+  // from a known clean state. Optional for backward compat.
+  if (prevHasConflictRef !== undefined) {
+    prevHasConflictRef.current = false;
+  }
 }

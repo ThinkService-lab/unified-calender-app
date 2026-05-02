@@ -405,32 +405,145 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Minimum event duration of 15 minutes for single click
     - _Requirements: 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7_
 
-- [ ] 10. Checkpoint - Ensure all tests pass
+  - [x] 9.11 Wire screen-reader announcements for drag conflict transitions
+    - **Drift identified:** Task 9.1B requires the parent gesture controllers (9.2 and 9.4) to announce conflict state transitions via `useScreenReaderAnnouncement('polite')` on first entry into conflict and on exit — NOT on every frame. The current implementations of `useDragReschedule` and `useDragResize` never import `useScreenReaderAnnouncement`, never track the previous `hasConflict` value, and never call `announce()`. The `accessibilityLabel` on `<ConflictIndicatorOverlay>` alone is insufficient because the overlay has `pointerEvents="none"` and is therefore never focusable, so assistive tech never reads it.
+    - Fix in `src/ui/gestures/useDragReschedule.ts`:
+      - Import `useScreenReaderAnnouncement` from `../accessibility/useAccessibility`
+      - Add a `useRef<boolean>(false)` tracking the previous `hasConflict` state
+      - In the existing `handleSnapChange` JS-thread callback, after computing `conflictResult.hasConflict`, compare against the ref; when the edge flips `false → true` call `announce(\`Conflicts with ${conflictResult.conflictingEventIds.length} event(s)\`, 'polite')`; when the edge flips `true → false` call `announce('No conflict', 'polite')`
+      - Reset the ref to `false` on gesture end (both success and spring-back paths) so the next drag starts clean
+    - Apply the same pattern in `src/ui/gestures/useDragResize.ts` using the `handleSnapChange` callback there
+    - Use the exact phrasing from `buildConflictAccessibilityLabel` in `src/ui/calendar/ConflictIndicatorOverlay.tsx` so the overlay's label and the live-region announcement match (singular/plural grammar already handled by the helper — consider exporting and reusing it)
+    - _Requirements: 4.4, 13.5_
+
+  - [x] 9.12 Reconcile the `onConflictCheck` signature mismatch between adapter and drag controllers
+    - **Drift identified:** `useConflictCheckAdapter.check(eventId, proposedStart, proposedEnd, calendarAccountId)` takes four arguments per the design doc, but `DragRescheduleConfig.onConflictCheck` and `DragResizeConfig.onConflictCheck` are typed as `(eventId, start, end) => ConflictCheckResult` (three arguments). Callers wiring the adapter to a drag controller must bind `calendarAccountId` via closure, and if they forget, the drag controller will silently pass three arguments to a function that expects four — TypeScript will not catch this because the callback type is narrower than the adapter's `check` signature.
+    - Note on functional impact: the existing `ConflictDetector.detectConflicts` in `src/conflicts/conflictDetector.ts` does NOT filter by `calendarAccountId` (it only filters self-conflict via `id` and checks time overlap), so the missing argument does not produce an incorrect conflict result today. This is API-hygiene drift, not a behaviour bug. The fix is still required because future conflict-detector revisions may start filtering by account, and because the design-doc contract should match the implementation.
+    - Fix option A (preferred — aligns both types with the design doc):
+      - Extend `DragRescheduleConfig.onConflictCheck` and `DragResizeConfig.onConflictCheck` to `(eventId, start, end, calendarAccountId) => ConflictCheckResult`
+      - Extend `DragRescheduleActiveEvent` and `DragResizeActiveEvent` with a required `calendarAccountId: string` field
+      - In the controllers' `handleSnapChange` and `handleDrop`/`handleCommit` JS callbacks, forward `activeEvent.calendarAccountId` to `config.onConflictCheck(...)`
+    - Fix option B (defer to caller — simpler, but less safe):
+      - Leave the controller callback signature unchanged
+      - Update the adapter docblock in `src/ui/gestures/useConflictCheckAdapter.ts` to document that callers are expected to bind `calendarAccountId` via closure, e.g. `onConflictCheck: (id, s, e) => adapter.check(id, s, e, event.calendarAccountId)`
+      - Add an integration-guide note to Task 18.1 so EventCard wiring remembers to bind
+    - Recommended: option A. Update the design doc §"Drag Reschedule Controller" and §"Drag Resize Controller" interface snippets to match.
+    - _Requirements: 4.4, 13.5_
+
+  - [x] 9.13 Refactor `usePullToRefresh` to compose the canonical `usePullToRefreshStyle` from the Micro-Interaction System
+    - **Drift identified:** `src/ui/gestures/usePullToRefresh.ts` rolls its own rotation loop (`useSharedValue('rotation')` + `withRepeat(withTiming(360, 900ms))` + `useDerivedValue` for the `deg` template), duplicating the motion logic already implemented in `src/ui/animation/microInteractions.ts :: usePullToRefreshStyle`. Key Decision #2 of design.md (shared spring/timing config across the whole app) is violated — two modules define the same 900ms rotation and 200ms fade-out independently.
+    - Fix:
+      - In `usePullToRefresh.ts`, call `usePullToRefreshStyle(isRefreshing || config.isSyncing)` from the Micro-Interaction System and compose its returned style with the pull-translation + fade-in/out logic that IS unique to this hook (indicator follows the finger during the pull, fades on sync-start / sync-complete)
+      - Remove the local `rotation` / `rotateDeg` shared values and the local `ROTATION_PERIOD_MS` constant — they become dead code
+      - Keep `opacity` and `translationY` shared values locally since they are pull-specific (not rotation-specific)
+      - The returned `indicatorStyle` should now compose three transforms: `translateY` (pull), `rotate` (from `usePullToRefreshStyle`), plus `opacity`
+    - Cross-check that `DURATION_PULL_TO_REFRESH_ROTATION` in `microInteractions.ts` still equals 900ms and `DURATION_PULL_TO_REFRESH_SETTLE` still equals 150ms — if they drift in a future Micro-Interaction tuning pass, this hook will pick up the new values automatically, which is the intent.
+    - _Requirements: 9.2, 9.3, 2.6_
+
+  - [x] 9.14 Fix spurious activation-frame snap haptic in `useDragResize`
+    - **Drift identified:** The docblock of `useDragResize` claims the first snap at gesture activation does NOT trigger a spurious haptic because `lastSnappedEndMinutes` is seeded to `initialEndMinutes`. However, `initialEndMinutes` is computed via `dateToMinutesOfDay(activeEvent.endTime)` (no snap), while `.onUpdate` compares against `snapToIncrement(rawEndMin, snapIncrement)`. If the event's existing end time is not on a 15-minute grid line (e.g. 10:07, 14:23), the very first `.onUpdate` frame computes a snapped value different from the seeded unsnapped value, and `runOnJS(triggerSnapHaptic)()` fires before the user has moved a meaningful distance. Req 14.4 says snap haptics fire "at each 15-minute snap point during the drag" — the activation frame is not one of those.
+    - Fix in `src/ui/gestures/useDragResize.ts` `.onStart`:
+      - Seed `lastSnappedEndMinutes.value` with `snapToIncrement(initialEndMinutes, snapIncrement)` — the SAME snap function used in `.onUpdate`, not the raw end time
+      - Also seed `proposedEndMinutes.value` with the snapped value so the first-frame conflict check runs against the correctly-snapped proposed end
+    - Verify the fix does NOT produce a spurious haptic for events whose end time IS already on a grid line (seeded and computed values match, no edge crossing, no haptic fires)
+    - _Requirements: 14.4_
+
+  - [x] 9.15 Remove dead-code branch in `useDragResize.onEnd` or make it reachable
+    - **Drift identified:** The `.onEnd` worklet in `useDragResize` has a branch `if (snappedEndMin >= minEndMin)` with an `else` that springs back to the original height. Given that `.onUpdate` already clamps `snappedEndMin` via `clamp(snappedRaw, minEndMin, maxEndMin)`, the worklet-shared `proposedEndMinutes.value` read by `.onEnd` can never be below `minEndMin`. The else branch is unreachable.
+    - Fix option A (preferred — align with Req 13.4 clamp-at-minimum semantics):
+      - Remove the unreachable else branch
+      - Update the comment above the `if` to say "minimum duration is already enforced by `.onUpdate`'s clamp; `.onEnd` always commits"
+    - Fix option B (if the spec reviewer decides "release below 15-min minimum reverts to original" is the desired UX rather than "clamp at 15-min minimum"):
+      - Remove the `minEndMin` clamp in `.onUpdate` so the user can drag above the start line
+      - Keep the `.onEnd` else branch and update its comment to reflect that releases below minimum revert completely
+      - Note: this changes the behaviour of the minimum-duration guarantee during the live drag, so Req 13.4 should be re-read to decide which interpretation is correct
+    - Recommended: option A. The acceptance criteria says "preventing the user from dragging the bottom edge above the 15-minute mark" which reads as a live clamp, matching the current `.onUpdate` behaviour.
+    - _Requirements: 13.4_
+
+  - [x] 9.16 Route hard-coded literal strings in `useInlineEventCreator` through `i18nService`
+    - **Drift identified:** `useInlineEventCreator.ts` falls back to the hard-coded literal `'New Event'` when the popover is submitted with an empty title. The project's existing `src/i18n/i18nService.ts` owns all user-facing strings. A hard-coded literal here will not translate and will not match the project's i18n pattern.
+    - Additionally, Req 12.5 ("WHEN the user submits the inline popover ... THE Inline_Event_Creator SHALL create the event via the existing event creation flow") does not authorize an empty-title fallback. A stricter reading would reject empty submissions and leave the popover open.
+    - Fix:
+      - Remove the `'New Event'` default-title fallback; instead, treat an empty / whitespace-only title as a submission error (do NOT call `onCreate`, keep the popover open, and let the consumer surface a validation hint)
+      - OR if the empty-title fallback is UX-required, move the literal to `src/i18n/locales/en.ts` under a new key like `inlineEventCreator.defaultTitle` and resolve it via `i18nService.t(...)` at submit time
+    - Decide with the user which option is correct before implementing; the design doc §"Inline Event Creator" is silent on empty submissions.
+    - _Requirements: 12.5_
+
+  - [x] 9.17 Guard `useInlineEventCreator.onSlotDragMove` against being called while the popover is open
+    - **Drift identified:** `onSlotDragMove` only guards against "drag never started" via null refs — it does NOT check `state.isPopoverVisible`. If a consumer wires the handlers to a gesture that keeps firing after the popover mounts (e.g., a pan gesture that doesn't cancel on popover open, or a misconfigured `Exclusive` composition), the highlighted overlay will silently move while the user is typing in the popover.
+    - Fix:
+      - Add an early return in `onSlotDragMove` when `state.isPopoverVisible === true` (use a ref so the check is stable across renders without re-creating the callback identity every render)
+      - Same defensive guard should apply in `onSlotDragEnd` for symmetry — a drag-end that fires while the popover is open should not re-finalise the selection
+    - _Requirements: 12.3, 12.4_
+
+  - [x] 9.18 Add unit-test coverage for the three most logic-dense hooks in Task 9
+    - **Drift identified:** Task 9 is marked complete but `src/ui/gestures/__tests__/` contains only `useAutoDismiss.test.ts` and a single-helper test in `useDragReschedule.test.ts`. The following hooks have substantial pure JS logic that is trivial to test without a Reanimated runtime, yet have zero coverage. Downstream Task 18 integration will break silently when these hooks' pure paths regress.
+    - Add `src/ui/gestures/__tests__/useInlineEventCreator.test.ts` covering:
+      - Single-tap creates a 15-minute selection snapped to the nearest grid line (tests `onSlotPress`)
+      - Click-drag downward populates `selectedEnd` with the snapped drag position (tests `onSlotDragStart` → `onSlotDragMove` → `onSlotDragEnd`)
+      - Click-drag upward (negative direction) swaps start/end on release (tests the `Math.min`/`Math.max` normalisation)
+      - Release less than 15 minutes from start extends the end to start + 15 (tests the minimum-duration clamp)
+      - Release at 23:55 on a 20-min selection pulls the start backward (tests the end-of-day ceiling clamp)
+      - `onPopoverSubmit` with a non-empty title calls `onCreate(start, end, trimmedTitle)` and resets state to idle
+      - `onPopoverDismiss` resets state to idle without calling `onCreate`
+      - `onCreate` rejection leaves state in idle (promise rejection does not trap the user in the popover)
+    - Add `src/ui/gestures/__tests__/useDragResize.test.ts` covering the pure helpers — the clamp and `buildProposedEnd` helpers ARE worklet-friendly pure functions: extract them into a sibling `dragResizeMath.ts` (mirror of `dragRescheduleMath.ts`) if needed, then test:
+      - `dateToMinutesOfDay` returns correct minutes for various Dates (including midnight and near-DST)
+      - `buildProposedEnd` preserves the start date's Y-M-D and applies the proposed end's H-M
+      - `buildProposedEnd` rolls the end forward by one day when the naive computation produces an end ≤ start (DST rollback case)
+    - Add `src/ui/gestures/__tests__/usePullToRefresh.test.ts` covering the JS-side state machine (timers, `startSync`, sync-lock, error string propagation):
+      - First sync sets `isRefreshing: true`, calls `onSync`, resolves → sets `isRefreshing: false`, clears `error`
+      - `onSync` rejection sets `error` to the rejection message (Error instance, plain string, and unknown value — three paths in `.catch`)
+      - Successful sync AFTER a failed sync clears `error` to null (existing behaviour, lock in via test)
+      - Calling `startSync` while `isRefreshing: true` is a no-op (defensive JS-side sync lock)
+      - Calling `startSync` while `config.isSyncing: true` is a no-op (caller-owned sync lock)
+    - Follow the `useAutoDismiss.test.ts` pattern: `@jest-environment jsdom`, a minimal `renderHook` helper backed by `react-dom/client`, `jest.useFakeTimers()` for the timer paths.
+    - _Requirements: 9.1, 9.4, 9.5, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 13.1, 13.2, 13.3, 13.4, 13.7_
+
+  - [x] 9.19 Add unit-test coverage for `ConflictIndicatorOverlay`
+    - **Drift identified:** Task 9.1B delivered the overlay component with accessibility labelling, web-specific hatch pattern, `overlapSlice` support, and fade-in/out animation — none of which are covered by a test. The exported `buildConflictAccessibilityLabel` helper in particular is already designed for testability but has no test.
+    - Add `src/ui/calendar/__tests__/ConflictIndicatorOverlay.test.tsx` covering:
+      - `buildConflictAccessibilityLabel(0)` → `"Conflict with 0 existing events"` (pluralisation edge case)
+      - `buildConflictAccessibilityLabel(1)` → `"Conflict with 1 existing event"` (singular)
+      - `buildConflictAccessibilityLabel(2)` → `"Conflict with 2 existing events"` (plural)
+      - `buildConflictAccessibilityLabel(-1)` and `buildConflictAccessibilityLabel(1.7)` — verify `Math.max(0, Math.floor(...))` guards against bad input
+      - Render the component with `visible: true` and verify the `accessibilityLabel` prop and `testID="conflict-indicator-overlay"` are present on the root `<Animated.View>`
+      - Render the component with `overlapSlice: undefined` vs a concrete slice and verify the slice-height computation produces a positive number (use a testing-library render or a minimal render + prop inspection; skip the animation assertions since Reanimated is stubbed in tests)
+    - _Requirements: 4.4, 13.5_
+
+  - [x] 9.20 Document the pull-to-refresh error-banner integration expectation so Task 18.2 wires it
+    - **Drift identified:** Task 9.8 bundles `AutoDismissBanner.tsx` with `usePullToRefresh.ts`, but `usePullToRefresh` only exposes an `error: string | null` field — it does NOT render or mount the banner. The banner is functionally orphaned until Task 18.2 wires it. A reviewer reading "Task 9.8 covers Req 9.4" will not realise the sync-error UX is still a TODO.
+    - Fix (documentation-only, no code change in Task 9):
+      - Update the `usePullToRefresh` docblock in `src/ui/gestures/usePullToRefresh.ts` to add a "Caller is responsible for" section that explicitly says: "Mount `<AutoDismissBanner message={error} />` inside the scrollable view root. Without this, sync failures are silently swallowed (no Req 9.4 UX)."
+      - Add an integration-guide sub-bullet to Task 18.2's existing "Integrate `usePullToRefresh` into all scrollable calendar views" line: "... AND mount `<AutoDismissBanner message={error} />` at the top of each view's layout so sync failures surface per Req 9.4"
+    - _Requirements: 9.4_
+
+- [x] 10. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 10A. Implement error handling for gestures and animations
-  - [ ] 10A.1 Create an error boundary component for Reanimated worklet crashes
+- [x] 10A. Implement error handling for gestures and animations
+  - [x] 10A.1 Create an error boundary component for Reanimated worklet crashes
     - Create `src/ui/animation/AnimationErrorBoundary.tsx` implementing a React error boundary that catches Reanimated worklet crashes
     - On error: fall back to non-animated rendering (pass `shouldAnimate: false` to children via context), log the error
     - Wrap all animated calendar view sections with this boundary
     - _Requirements: 2.1, 2.5_
 
-  - [ ] 10A.2 Add error handling to drag-to-reschedule persist failures
+  - [x] 10A.2 Add error handling to drag-to-reschedule persist failures
     - In `useDragReschedule`, wrap the `onReschedule` callback in a try/catch
     - On persist failure: revert the event to its original position via spring-back animation, display an `AutoDismissBanner` with message "Couldn't reschedule — try again."
     - _Requirements: 4.3, 4.7_
 
-  - [ ] 10A.3 Add error handling to drag-to-resize persist failures
+  - [x] 10A.3 Add error handling to drag-to-resize persist failures
     - In `useDragResize`, wrap the `onResize` callback in a try/catch
     - On persist failure: revert the event to its original end time, display an `AutoDismissBanner` with message "Couldn't resize — try again."
     - _Requirements: 13.3, 13.7_
 
-  - [ ] 10A.4 Add error handling to inline event creation failures
+  - [x] 10A.4 Add error handling to inline event creation failures
     - In `useInlineEventCreator`, wrap the `onCreate` callback in a try/catch
     - On failure: dismiss the popover, display an `AutoDismissBanner` with message "Couldn't create event."
     - _Requirements: 12.5_
 
-  - [ ] 10A.5 Add gesture handler availability detection with TouchableOpacity fallback
+  - [x] 10A.5 Add gesture handler availability detection with TouchableOpacity fallback
     - Create `src/ui/gestures/gestureAvailability.ts` implementing a `useGestureAvailability()` hook
     - Detect whether `react-native-gesture-handler` is available at runtime
     - When unavailable: export a flag that gesture-dependent components read to fall back to `TouchableOpacity`-based interactions, disabling drag features gracefully
@@ -445,8 +558,8 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Create tests at `src/ui/animation/__tests__/AnimationErrorBoundary.test.ts` and `src/ui/gestures/__tests__/errorHandling.test.ts`
     - _Requirements: 4.3, 4.7, 12.5, 13.3, 13.7_
 
-- [ ] 11. Implement View Transition and UI Components
-  - [ ] 11.1 Create the View Transition Animator
+- [x] 11. Implement View Transition and UI Components
+  - [x] 11.1 Create the View Transition Animator
     - Create `src/ui/animation/ViewTransitionAnimator.tsx` implementing crossfade + horizontal slide transitions between view modes
     - Complete each transition within 350ms
     - Implement zoom-in transition for Month_View day tap → Day_View via `useZoomTransition` hook
@@ -454,7 +567,7 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Reduced motion: skip all transition animations, display target view immediately
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
 
-  - [ ] 11.1A Create the Swipe Navigation Host
+  - [x] 11.1A Create the Swipe Navigation Host
     - Create `src/ui/gestures/SwipeNavigationHost.tsx` implementing the double-buffer wrapper that renders the current and incoming views so the slide animation from `useSwipeNavigation` is visible (Req 15.4)
     - Props match the design's `SwipeNavigationHostProps`: `anchorDate`, `renderView(anchorDate)`, `onNavigateForward`, `onNavigateBack`, `unit: 'day' | 'week' | 'month'`
     - Render three absolutely-positioned layers (previous at -100% offset, current at 0, next at +100%), apply `animatedStyle` from `useSwipeNavigation` to the current layer and `incomingStyle` to whichever neighbor matches the swipe direction (other neighbor uses opacity 0)
@@ -470,13 +583,13 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Create test at `src/ui/animation/__tests__/ViewTransitionAnimator.property.test.ts`
     - **Validates: Requirements 3.5**
 
-  - [ ] 11.3 Create the Animated View Mode Switcher
+  - [x] 11.3 Create the Animated View Mode Switcher
     - Create `src/ui/calendar/AnimatedViewModeSwitcher.tsx` enhancing the existing `ViewModeSwitcher` with a sliding indicator
     - Indicator moves via spring animation (250ms) using Design_Token_System colors
     - Reduced motion: instant indicator position change
     - _Requirements: 8.1, 8.2, 8.3, 8.4_
 
-  - [ ] 11.4 Create the Current Time Indicator component
+  - [x] 11.4 Create the Current Time Indicator component
     - Create `src/ui/calendar/CurrentTimeIndicator.tsx` implementing the horizontal "now" line
     - Style with Design_Token_System primary accent color and circular dot at left edge
     - Update position every 60 seconds via setInterval without full re-render
@@ -490,7 +603,7 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Create test at `src/ui/calendar/__tests__/CurrentTimeIndicator.test.ts`
     - _Requirements: 10.1, 10.2, 10.3_
 
-  - [ ] 11.6 Create the Inline Event Popover component
+  - [x] 11.6 Create the Inline Event Popover component
     - Create `src/ui/calendar/InlineEventPopover.tsx` implementing the compact popover for click-to-create
     - Auto-focus title input on mount, display formatted start–end time range
     - Enter key: submit. Escape key: dismiss. Click outside: dismiss
@@ -499,7 +612,7 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Accessibility: role="dialog", aria-label="Create event", focus trap
     - _Requirements: 12.4, 12.5, 12.6_
 
-  - [ ] 11.7 Create the Empty State View component
+  - [x] 11.7 Create the Empty State View component
     - Create `src/ui/calendar/EmptyStateView.tsx` implementing contextual empty states
     - Messages: day → "No events today — enjoy your free time!", week → "Your week is wide open", agenda → "Nothing coming up", no-accounts → welcome message + "Connect Account" button
     - CTA button "Create an event" that opens Quick Create Bar or Inline Event Creator
@@ -514,8 +627,8 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Create test at `src/ui/calendar/__tests__/EmptyStateView.property.test.ts`
     - **Validates: Requirements 16.2**
 
-- [ ] 12. Implement the Quick Create Bar and Live Preview
-  - [ ] 12.0 Extend EventEditor to accept pre-populated partial fields
+- [x] 12. Implement the Quick Create Bar and Live Preview
+  - [x] 12.0 Extend EventEditor to accept pre-populated partial fields
     - Update `src/ui/editor/EventEditor.tsx` to extend `EventEditorProps` with two optional fields from the design's `EventEditorPrepopulateExtension`:
       - `initialValues?: Partial<EventFormData>` — partial form data to seed the editor in 'create' mode (ignored in 'edit' mode)
       - `highlightRecurrenceSection?: boolean` — when true, visually highlights the recurrence section with a 400ms border color transition from `tokens.colors.warning` to `tokens.colors.border` (static border when reduced motion) AND scrolls the recurrence section into view via ref on mount
@@ -529,7 +642,7 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
       - recurrence (only when `confidence.recurrence === 'parsed'`) → form.recurrenceRule
     - _Requirements: 5.8, 17.8_
 
-  - [ ]* 12.0A Write unit tests for EventEditor pre-population
+  - [x]* 12.0A Write unit tests for EventEditor pre-population
     - Verify that `initialValues` provided in 'create' mode seeds the form with the partial data and leaves other fields at defaults
     - Verify that `initialValues` is ignored when `mode === 'edit'`
     - Verify that `highlightRecurrenceSection: true` applies the warning border to the recurrence section and scrolls it into view
@@ -537,7 +650,7 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Create tests at `src/ui/editor/__tests__/eventEditorPrepopulate.test.ts` and `src/nlp/__tests__/parsedEventToFormData.test.ts`
     - _Requirements: 5.8, 17.8_
 
-  - [ ] 12.1 Create the ParsedEvent to CreateEventInput converter
+  - [x] 12.1 Create the ParsedEvent to CreateEventInput converter
     - Create `src/nlp/convertParsedEvent.ts` implementing `convertParsedEventToCreateInput(parsedEvent, calendarAccountId)`
     - Return null if date or time is missing (signals EventEditor fallback)
     - Combine date + time into startTime, compute endTime from duration
@@ -560,7 +673,7 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
       - `parentRecurringEventId`: null
     - _Requirements: 5.2, 5.8_
 
-  - [ ] 12.2 Create the Quick Create Bar component
+  - [x] 12.2 Create the Quick Create Bar component
     - Create `src/ui/calendar/QuickCreateBar.tsx` implementing the persistent NL input
     - Display at top of Day_View, Week_View, and Agenda_View
     - Parse input via NL_Parser on each keystroke (throttled at 100ms intervals)
@@ -573,7 +686,7 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Trigger haptic feedback on successful creation (mobile) via `useHaptics().trigger('success')`
     - _Requirements: 5.1, 5.2, 5.8, 14.3, 17.8, 18.1_
 
-  - [ ] 12.3 Create the Live Preview Panel component
+  - [x] 12.3 Create the Live Preview Panel component
     - Create `src/ui/calendar/LivePreviewPanel.tsx` implementing real-time preview of parsed fields
     - Update within 100ms of each keystroke (throttled)
     - Confirmed fields: solid text, Design_Token_System primary color
@@ -583,8 +696,8 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Screen reader: ARIA live region with 500ms debounce
     - _Requirements: 18.1, 18.2, 18.3, 18.4, 18.5, 18.6, 18.7_
 
-- [ ] 13. Implement the Keyboard Shortcut Manager and Help Overlay
-  - [ ] 13.1 Create the Keyboard Shortcut Manager
+- [x] 13. Implement the Keyboard Shortcut Manager and Help Overlay
+  - [x] 13.1 Create the Keyboard Shortcut Manager
     - Create `src/ui/keyboard/useKeyboardShortcuts.ts` implementing the `useKeyboardShortcuts(config)` hook
     - Register default shortcuts: C (Quick Create), T (today), 1-4 (view switching), ←/→ (navigation), ? (help overlay), Escape (dismiss)
     - Suppress single-key shortcuts when text input has focus (`isSuppressed` flag)
@@ -609,7 +722,7 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Create test at `src/ui/keyboard/__tests__/useKeyboardShortcuts.property.test.ts`
     - **Validates: Requirements 11.7**
 
-  - [ ] 13.3 Create the Shortcut Help Overlay component
+  - [x] 13.3 Create the Shortcut Help Overlay component
     - Create `src/ui/keyboard/ShortcutHelpOverlay.tsx` implementing the modal overlay
     - Display all shortcuts grouped by category (navigation, creation, view-switching)
     - Entrance animation: fade-in + scale-up from 0.95 (200ms). Exit: fade-out + scale-down (150ms)
@@ -625,39 +738,39 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Create test at `src/ui/keyboard/__tests__/useKeyboardShortcuts.test.ts`
     - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 11.8_
 
-- [ ] 14. Implement the Month View Stability Fix
-  - [ ] 14.1 Create the Stable Navigation Hook
+- [x] 14. Implement the Month View Stability Fix
+  - [x] 14.1 Create the Stable Navigation Hook
     - Create `src/ui/calendar/useStableNavigation.ts` implementing the debounce-based navigation stabilizer
     - Track latest requested month via useRef, debounce state updates (default 80ms)
     - Cancel stale renders via generation counter
     - Return `stableDate` and `isPending` flag
     - _Requirements: 6.4_
 
-  - [ ] 14.2 Create the Stable Month View wrapper
+  - [x] 14.2 Create the Stable Month View wrapper
     - Create `src/ui/calendar/StableMonthView.tsx` wrapping the existing `MonthView` with `useStableNavigation`
     - Interpose stable navigation between raw date prop and `buildMonthGridData`
     - Show subtle loading indicator when `isPending` is true
     - Ensure correct rendering for: empty events array, cross-boundary events, all valid months (Jan 1970 – Dec 2099), rapid navigation (>5 actions in 2s)
     - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5_
 
-  - [ ]* 14.3 Write property test for month grid correctness (Property 9)
+  - [x]* 14.3 Write property test for month grid correctness (Property 9)
     - **Property 9: Month grid correctness for any valid month**
     - Generate random months (1–12) and years (1970–2099), verify `buildMonthGridData` produces 42 cells with correct day numbers
     - Create test at `src/ui/calendar/__tests__/monthView.property.test.ts`
     - **Validates: Requirements 6.3**
 
-  - [ ]* 14.4 Write unit tests for Month View stability
+  - [x]* 14.4 Write unit tests for Month View stability
     - Test empty events array rendering, cross-boundary events, Feb 29 in leap/non-leap years
     - Test rapid navigation simulation (>5 actions in 2s)
     - Create test at `src/ui/calendar/__tests__/StableMonthView.test.ts`
     - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5_
 
-- [ ] 15. Checkpoint - Ensure all tests pass
+- [x] 15. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 
-- [ ] 16. Implement the Calendar Sidebar
-  - [ ] 16.1 Create the Calendar Sidebar component
+- [x] 16. Implement the Calendar Sidebar
+  - [x] 16.1 Create the Calendar Sidebar component
     - Create `src/ui/calendar/CalendarSidebar.tsx` implementing the left panel for tablet/desktop
     - Three sections: Mini_Month_Navigator (compact month grid with selected date highlight, arrow navigation with crossfade 200ms), account toggles (checkbox + name + color dot), upcoming events list (next 10 events sorted by startTime)
     - Implement crossfade animation (200ms) for mini-month forward/backward navigation using the Animation Engine's `withMotion` utility. When reduced motion is active, display month changes instantly
@@ -668,7 +781,7 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Use Design_Token_System colors and typography
     - _Requirements: 19.1, 19.2, 19.3, 19.4, 19.5, 19.6, 19.7, 19.8_
 
-  - [ ]* 16.2 Write property test for upcoming events sorting and limit (Property 17)
+  - [x]* 16.2 Write property test for upcoming events sorting and limit (Property 17)
     - **Property 17: Upcoming events list is sorted and limited**
     - Generate random event lists (0–100 events), verify upcoming list has ≤10 events sorted by startTime ascending, all with startTime ≥ current time
     - Create test at `src/ui/calendar/__tests__/CalendarSidebar.property.test.ts`
@@ -723,6 +836,7 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Announce conflict state transitions via `useScreenReaderAnnouncement('polite')` on first entry into conflict ("Conflicts with N event(s)") and on exit ("No conflict") — use a `useRef` to track the previous `hasConflict` state so announcements only fire on transitions, not every frame
     - Wrap Day_View, Week_View, and Month_View with `SwipeNavigationHost` (from Task 11.1A) to enable mobile swipe navigation with the slide animation. Pass `unit="day"`/`"week"`/`"month"` and the appropriate `renderView` callback
     - Integrate `usePullToRefresh` into all scrollable calendar views, connecting to existing SyncEngine
+    - Mount `<AutoDismissBanner message={error} />` at the top of each scrollable view's layout so pull-to-refresh sync failures surface per Req 9.4 (Task 9.20 cross-reference — the banner component exists but is orphaned until this wiring lands)
     - Wire the `pullToRefresh` micro-interaction animation from the Micro-Interaction System into the pull-to-refresh gesture controller's indicator rendering
     - Integrate `useInlineEventCreator` into Day_View and Week_View time grids
     - Wire haptic feedback into drag activation, drop, resize snap points, and event creation

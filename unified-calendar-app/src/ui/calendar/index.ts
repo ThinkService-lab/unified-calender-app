@@ -24,6 +24,10 @@ export type { AgendaViewProps } from './AgendaView';
 export { ViewModeSwitcher } from './ViewModeSwitcher';
 export type { ViewModeSwitcherProps } from './ViewModeSwitcher';
 
+// Animated view mode switcher (sliding indicator)
+export { AnimatedViewModeSwitcher } from './AnimatedViewModeSwitcher';
+export type { AnimatedViewModeSwitcherProps } from './AnimatedViewModeSwitcher';
+
 // Color coding utilities
 export {
   CALENDAR_COLOR_PALETTE,
@@ -61,6 +65,14 @@ export type { DateRange, AgendaGroup, MonthDayInfo } from './calendarViewModel';
 export { computeOverlapLayout } from './overlapLayout';
 export type { EventLayoutInfo } from './overlapLayout';
 
+// Current time indicator
+export { CurrentTimeIndicator, computeCurrentTimePosition } from './CurrentTimeIndicator';
+export type { CurrentTimeIndicatorProps } from './CurrentTimeIndicator';
+
+// Inline event popover (click-to-create)
+export { InlineEventPopover } from './InlineEventPopover';
+export type { InlineEventPopoverProps } from './InlineEventPopover';
+
 // Time slot utilities (snapping + coordinate conversion)
 export {
   snapToIncrement,
@@ -69,3 +81,30 @@ export {
   DEFAULT_SNAP_INCREMENT_MINUTES,
 } from './timeSlotUtils';
 export type { TimeSlotPosition } from './timeSlotUtils';
+
+// Empty state view
+export { EmptyStateView, getEmptyStateMessage } from './EmptyStateView';
+export type { EmptyStateViewProps, EmptyStateContext } from './EmptyStateView';
+
+// Quick Create Bar (NL event creation)
+export { QuickCreateBar } from './QuickCreateBar';
+export type { QuickCreateBarProps } from './QuickCreateBar';
+
+// Live Preview Panel (real-time parsed field preview)
+export { LivePreviewPanel } from './LivePreviewPanel';
+export type { LivePreviewPanelProps } from './LivePreviewPanel';
+
+// Stable Month View (debounced navigation wrapper)
+export { StableMonthView } from './StableMonthView';
+export type { StableMonthViewProps } from './StableMonthView';
+
+// Stable navigation hook
+export { useStableNavigation } from './useStableNavigation';
+export type {
+  UseStableNavigationConfig,
+  UseStableNavigationReturn,
+} from './useStableNavigation';
+
+// Calendar Sidebar (tablet/desktop left panel)
+export { CalendarSidebar, getMonthGrid, getUpcomingEvents } from './CalendarSidebar';
+export type { CalendarSidebarProps } from './CalendarSidebar';

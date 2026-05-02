@@ -416,8 +416,18 @@ interface DragRescheduleConfig {
   visibleDayDates: Date[];
   /** Callback to update event times */
   onReschedule: (eventId: string, newStart: Date, newEnd: Date) => Promise<void>;
-  /** Callback to check conflicts at proposed time */
-  onConflictCheck: (eventId: string, newStart: Date, newEnd: Date) => ConflictCheckResult;
+  /**
+   * Callback to check conflicts at proposed time.
+   *
+   * Task 9.12 (Option A): `calendarAccountId` is forwarded so the
+   * downstream adapter can apply account-scoped filtering if required.
+   */
+  onConflictCheck: (
+    eventId: string,
+    newStart: Date,
+    newEnd: Date,
+    calendarAccountId: string,
+  ) => ConflictCheckResult;
 }
 
 interface ConflictCheckResult {
@@ -591,8 +601,17 @@ interface DragResizeConfig {
   maxPersistTime: 200;
   /** Callback to update event end time */
   onResize: (eventId: string, newEnd: Date) => Promise<void>;
-  /** Callback to check conflicts at proposed end time */
-  onConflictCheck: (eventId: string, newEnd: Date) => ConflictCheckResult;
+  /**
+   * Callback to check conflicts at proposed end time.
+   *
+   * Task 9.12 (Option A): `calendarAccountId` is forwarded so the
+   * downstream adapter can apply account-scoped filtering if required.
+   */
+  onConflictCheck: (
+    eventId: string,
+    newEnd: Date,
+    calendarAccountId: string,
+  ) => ConflictCheckResult;
   /**
    * Haptic feedback callback triggered at each 15-minute snap point during resize drag.
    * Integrates with the `useHaptics` hook. The hook internally calls

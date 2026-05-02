@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "New File Test Coverage Audit",
+  "description": "After each spec task completes, audits that tests created by the task actually exercise the new source files introduced by that task — not just pre-existing utility functions. Catches the common failure mode where tests pass but don't cover the task's deliverables.",
+  "version": "1",
+  "when": {
+    "type": "postTaskExecution"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A spec task just completed. Before reporting success, do a test coverage audit for NEW files created by this task:\n\n1. Identify all NEW source files (non-test) that this task created or significantly modified. These are the task's deliverables.\n2. Identify all test files that this task created or modified.\n3. For each new source file, verify that at least one test file directly imports and exercises it:\n   - Check import statements in the test files — do they import from the new source files, or only from pre-existing modules?\n   - If a test file only tests pre-existing functions (e.g., a utility that already existed), flag it as \"testing the wrong layer\"\n4. For React hooks: verify tests actually mount the hook (via renderHook or equivalent) and test its state transitions, not just the pure functions it calls internally. Check that the test file has `@jest-environment jsdom` if it needs to render React components or hooks.\n5. For React components: verify tests render the component and assert on its behavior (props handling, conditional rendering, callbacks), not just the data functions it consumes.\n6. Check that test helper functions (like makeEvent, makeConfig) correctly populate ALL required fields of the types they construct — especially `id` fields. A spread pattern like `...overrides` can mask missing explicit field assignments.\n7. If you find gaps:\n   - List each gap with severity (High = new file has zero test coverage, Medium = tests exist but don't exercise the new code, Low = minor test quality issue)\n   - Fix them immediately before reporting success\n8. If all new files have proper direct test coverage, confirm the audit passed.\n\nCRITICAL: \"All tests pass\" is NOT sufficient. Tests must exercise the NEW code, not just pre-existing code that happens to be called by the new code."
+  }
+}
