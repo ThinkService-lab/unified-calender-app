@@ -787,8 +787,8 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Create test at `src/ui/calendar/__tests__/CalendarSidebar.property.test.ts`
     - **Validates: Requirements 19.6**
 
-- [ ] 17. Implement the Onboarding Animator
-  - [ ] 17.0 Create the three onboarding animation components
+- [x] 17. Implement the Onboarding Animator
+  - [x] 17.0 Create the three onboarding animation components
     - Create `src/ui/onboarding/animations/NaturalLanguageDemo.tsx` implementing a reanimated worklet-based looping animation (3–6 second loop) demonstrating the Quick Create Bar: typed text appears character-by-character, then the Live Preview Panel resolves parsed fields, then an event card pops in. Uses `useSharedValue`, `useAnimatedStyle`, `withRepeat`, `withSequence`, `withTiming`
     - Create `src/ui/onboarding/animations/DragToRescheduleDemo.tsx` implementing a reanimated worklet-based looping animation (3–6 second loop) demonstrating drag-to-reschedule: an event card lifts (scale 1.03), translates to a new time slot, settles in place. Uses `withRepeat`/`withSequence`
     - Create `src/ui/onboarding/animations/ViewSwitchingDemo.tsx` implementing a reanimated worklet-based looping animation (3–6 second loop) demonstrating view transitions: a day-view grid crossfades + slides to a week-view grid, then back. Uses `withRepeat`/`withSequence`
@@ -797,7 +797,7 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Create static image fallbacks for reduced motion: `src/ui/onboarding/animations/staticFallbacks/` with `natural-language.png`, `drag-to-reschedule.png`, `view-switching.png` (placeholder images acceptable for MVP — real designer assets in a follow-up)
     - _Requirements: 20.2, 20.3_
 
-  - [ ] 17.1 Create the Onboarding Animator component
+  - [x] 17.1 Create the Onboarding Animator component
     - Create `src/ui/onboarding/OnboardingAnimator.tsx` implementing the first-run experience
     - Present 3 animated screens (from Task 17.0): NL event creation → drag-to-reschedule → view switching with transitions
     - Each screen renders the corresponding animation component (or static image when reduced motion is active) with `isPlaying={currentScreen === index}` so only the visible screen's animation loops
@@ -817,19 +817,19 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Create test at `src/ui/onboarding/__tests__/OnboardingAnimator.test.ts`
     - _Requirements: 20.1, 20.6, 20.7_
 
-- [ ] 18. Integration wiring — connect all new modules to the existing app
-  - [ ] 18.1 Integrate Design Tokens into existing components
+- [x] 18. Integration wiring — connect all new modules to the existing app
+  - [x] 18.1 Integrate Design Tokens into existing components
     - Update existing UI components (`UnifiedCalendarView`, `ViewModeSwitcher`, `MonthView`, `DayView`, `WeekView`, `AgendaView`, `EventCard`) to import and use Design_Token_System tokens instead of hardcoded style values
     - Replace the current `CALENDAR_COLOR_PALETTE` in `colorCoding.ts` with the Design_Token_System event palette
     - Wire `useMicroInteractions().eventCreated` into EventCard mount behavior for user-created events
     - Wire `useMicroInteractions().syncAppear` into EventCard mount behavior for events where `useIsRecentlyArrivedFromSync(event.id)` returns true (from Task 2.5)
     - Wire `useMicroInteractions().visibilityToggle` into EventCard rendering using `useAccountVisibilityTransition(event.calendarAccountId)` (from Task 2.6) — when the hook returns 'fading-in' or 'fading-out', apply the animation; when 'idle', render without animation
-    - Wire `useMicroInteractions().eventDeleted` into EventCard rendering — when `event.syncStatus === 'pending_delete'` (triggered by the `useAnimatedEventDelete` hook from Task 2.7), apply the shrink+fade animation
+    - Wire `useMicroInteractions().eventDeleted` into EventCard rendering — when `useIsPendingAnimatedDelete(event.id)` returns true (driven by the `pendingAnimatedDelete` transient set on eventsStore, populated by the `useAnimatedEventDelete` hook from Task 2.7), apply the shrink+fade animation
     - Replace direct `EventCRUDService.deleteEvent` calls in EventCard context menus / swipe-to-delete with `useAnimatedEventDelete().deleteWithAnimation` so the delete animation plays before the event is removed from the store
     - Wire `useMicroInteractions().pressDown` / `pressRelease` into EventCard press feedback (Req 7.1, 7.2)
     - _Requirements: 1.5, 1.6, 2.2, 2.3, 7.1, 7.2, 7.3, 7.4_
 
-  - [ ] 18.2 Wire gesture controllers into calendar views
+  - [x] 18.2 Wire gesture controllers into calendar views
     - Integrate `useDragReschedule` into Day_View and Week_View Event_Cards (long-press to drag) — pass `useConflictCheckAdapter(visibleEvents).check` (from Task 9.1A) as `onConflictCheck`
     - Integrate `useDragResize` into Day_View and Week_View Event_Cards (bottom edge drag) — pass the same conflict adapter as `onConflictCheck`
     - Render `ConflictIndicatorOverlay` (from Task 9.1B) on top of the dragged Event_Card when `state.hasConflict === true`, with `proposedRect` computed from the gesture's animated values and `conflictCount` from `state.conflictingEventIds.length`
@@ -842,53 +842,81 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Wire haptic feedback into drag activation, drop, resize snap points, and event creation
     - _Requirements: 2.4, 4.1, 4.3, 4.4, 9.1, 12.1, 13.1, 13.5, 14.1, 14.2, 14.4, 15.1, 15.2, 15.4_
 
-  - [ ] 18.3 Wire View Transition Animator and Animated ViewModeSwitcher into UnifiedCalendarView
+  - [x] 18.3 Wire View Transition Animator and Animated ViewModeSwitcher into UnifiedCalendarView
     - Replace the existing `ViewModeSwitcher` with `AnimatedViewModeSwitcher` in `UnifiedCalendarView`
     - Wrap calendar view rendering with `ViewTransitionAnimator`
     - Wire zoom transition for Month_View day tap → Day_View navigation
     - _Requirements: 3.1, 3.3, 8.1_
 
-  - [ ] 18.4 Wire Quick Create Bar and Live Preview into calendar views
+  - [x] 18.4 Wire Quick Create Bar and Live Preview into calendar views
     - Add `QuickCreateBar` to the top of Day_View, Week_View, and Agenda_View
     - Connect `QuickCreateBar` to `EventCRUDService.createEvent` via `convertParsedEventToCreateInput` for the successful-parse path
     - For the fallback path, open `EventEditor` in 'create' mode with `initialValues: parsedEventToFormData(parsedEvent)` (from Task 12.0) and `highlightRecurrenceSection` set to true only when `confidence.recurrence === 'attempted_unresolved'`
     - _Requirements: 5.1, 5.8, 17.8, 18.1_
 
-  - [ ] 18.5 Wire Keyboard Shortcut Manager into the app
+  - [x] 18.5 Wire Keyboard Shortcut Manager into the app
     - Integrate `useKeyboardShortcuts` into `UnifiedCalendarView` with callbacks for Quick Create, today navigation, view switching, and forward/backward navigation
     - Wire Shortcut Help Overlay visibility toggle
     - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5, 11.6_
 
-  - [ ] 18.6 Wire Calendar Sidebar into ResponsiveLayout
+  - [x] 18.6 Wire Calendar Sidebar into ResponsiveLayout
     - Integrate `CalendarSidebar` into the existing `ResponsiveLayout` for tablet and desktop breakpoints
     - Connect mini month navigator to `UnifiedCalendarView` anchor date
     - Connect account toggles to existing visibility toggle flow
     - Connect upcoming events list to event store
     - _Requirements: 19.1, 19.2, 19.4, 19.5, 19.6_
 
-  - [ ] 18.7 Wire Stable Month View and Empty States
+  - [x] 18.7 Wire Stable Month View and Empty States
     - Replace `MonthView` usage in `UnifiedCalendarView` with `StableMonthView`
     - Add `EmptyStateView` rendering when Day_View, Week_View, or Agenda_View has zero visible events
     - Add first-launch empty state when no calendar accounts are connected
     - _Requirements: 6.1, 6.4, 16.1, 16.4_
 
-  - [ ] 18.8 Wire Current Time Indicator into Day and Week views
+  - [x] 18.8 Wire Current Time Indicator into Day and Week views
     - Add `CurrentTimeIndicator` to `DayView` and `WeekView` components
     - Pass `hourHeight` and `isCurrentDay` props appropriately
     - _Requirements: 10.1, 10.2, 10.3_
 
-  - [ ] 18.9 Wire Onboarding Animator into app entry point
+  - [x] 18.9 Wire Onboarding Animator into app entry point
     - Integrate `OnboardingAnimator` into the app's root component (App.tsx or navigation entry)
     - Check onboarding completion state via `OnboardingManager.isComplete(userId)` — this is the single source of truth (Task 1.6 explicitly did NOT add `onboardingComplete` to `UIPreferences` to avoid duplicated state)
     - Show first-run experience only when `isComplete` returns false
     - Wire `OnboardingAnimator`'s `onComplete` / `onSkip` callbacks to `OnboardingManager.completeStep` and `OnboardingManager.skipOnboarding` respectively
     - _Requirements: 20.1, 20.7_
 
-  - [ ] 18.10 Wire UIPreferences into remaining components
+  - [x] 18.10 Wire UIPreferences into remaining components
     - Wire `shortcutOverrides` from the UIPreferences store (Task 1.6) into the Keyboard Shortcut Manager for future custom shortcut support (currently unused but reserved)
     - Verify the system theme listener wired in Task 1.6 propagates correctly — changing OS dark mode while the app is running should flip `useTokens()` for all consumers within 500ms (Req 1.8)
     - Note: `onboardingComplete` is deliberately NOT wired here — it lives in `OnboardingManager` (see Task 18.9)
     - _Requirements: 1.7, 1.8_
+
+  - [x] 18.11 Add pull-to-refresh to AgendaView
+    - **Gap fix:** Req 9.1 explicitly lists Agenda_View as a pull-to-refresh target, but AgendaView currently has no `usePullToRefresh` hook, no sync indicator, and no `AutoDismissBanner` for sync errors.
+    - Add `onSync` and `isSyncing` props to `AgendaViewProps`
+    - Integrate `usePullToRefresh` with `triggerDistance: 80` and connect to the `onSync` callback
+    - Wrap the FlatList in a `GestureDetector` with the pull gesture
+    - Render the pull-to-refresh indicator (rotating sync icon) using `usePullToRefreshStyle` micro-interaction
+    - Mount `<AutoDismissBanner message={pullError} />` at the top of the view for sync failure display (Req 9.4)
+    - Pass `onSync` and `isSyncing` from `UnifiedCalendarView` through to `AgendaView` (same pattern as DayView/WeekView)
+    - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5_
+
+  - [x] 18.12 Replace AgendaView inline empty state with EmptyStateView component
+    - **Gap fix:** AgendaView renders a simple inline `<Text>No upcoming events</Text>` instead of using the shared `EmptyStateView` component. This misses the contextual illustration, correct message text ("Nothing coming up" per Req 16.2), "Create an event" CTA button (Req 16.3), entrance animation (Req 16.6), and accessibility labeling (Req 16.7).
+    - Replace the inline empty state block in AgendaView with `<EmptyStateView context="agenda" onCreateEvent={handleEmptyStateCreate} />`
+    - The `EmptyStateView` component already handles the correct message, illustration, CTA, animation, and accessibility for the `'agenda'` context — this is a wiring fix, not a new component.
+    - Note: the empty state for AgendaView when rendered inside `UnifiedCalendarView` is already handled by the parent (Task 18.7). This fix addresses the AgendaView's own internal empty branch when it receives zero events directly.
+    - _Requirements: 16.1, 16.2, 16.3, 16.6, 16.7_
+
+  - [x] 18.13 Fix stale Task 18.1 description referencing `syncStatus` instead of `pendingAnimatedDelete`
+    - **Documentation fix:** Task 18.1 bullet 6 says "when `event.syncStatus === 'pending_delete'`" but the actual implementation (correctly) uses `useIsPendingAnimatedDelete(event.id)` from the `pendingAnimatedDelete` transient set on eventsStore (per Task 2.7). Update the task description to match the implementation.
+    - _Requirements: 7.3_
+
+  - [x] 18.14 Pass pull-to-refresh props through StableMonthView to MonthView
+    - **Gap fix:** MonthView already has full pull-to-refresh integration (usePullToRefresh, indicator, AutoDismissBanner), but StableMonthView — which wraps MonthView — does not forward `onSync` or `isSyncing` props. Since UnifiedCalendarView renders StableMonthView (not MonthView directly), the pull-to-refresh gesture is unreachable in month view.
+    - Add `onSync` and `isSyncing` props to `StableMonthViewProps`
+    - Forward both props to the inner `<MonthView>` render call
+    - Pass `onSync` and `isSyncing` from `UnifiedCalendarView` through to `StableMonthView` in the month view `renderView` callback
+    - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5_
 
 - [ ] 18A. Integration, performance, and accessibility tests
   - [ ]* 18A.1 Integration test: Drag-to-reschedule end-to-end flow
@@ -952,7 +980,7 @@ This plan transforms the Unified Calendar App's front-end into a fluid, gesture-
     - Create test at `src/ui/__tests__/accessibility.test.ts`
     - _Requirements: 2.5, 3.4, 7.5, 8.4, 15.5, 16.6, 19.7, 20.8_
 
-- [ ] 19. Final checkpoint - Ensure all tests pass
+- [x] 19. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes

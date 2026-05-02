@@ -29,6 +29,10 @@ export interface StableMonthViewProps {
   onEventPress?: (event: CalendarEvent) => void;
   /** Debounce window for stable navigation (default: 80ms) */
   navigationDebounceMs?: number;
+  /** Sync callback for pull-to-refresh (Req 9.1) */
+  onSync?: () => Promise<void>;
+  /** Whether a sync is currently in progress */
+  isSyncing?: boolean;
 }
 
 /**
@@ -64,6 +68,8 @@ export function StableMonthView({
   onDayPress,
   onEventPress,
   navigationDebounceMs,
+  onSync,
+  isSyncing,
 }: StableMonthViewProps) {
   const tokens = useTokens();
 
@@ -102,6 +108,8 @@ export function StableMonthView({
         accountIndexMap={accountIndexMap}
         onDayPress={onDayPress}
         onEventPress={onEventPress}
+        onSync={onSync}
+        isSyncing={isSyncing}
       />
     </View>
   );

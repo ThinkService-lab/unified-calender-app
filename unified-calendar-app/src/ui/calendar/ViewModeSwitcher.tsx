@@ -1,9 +1,10 @@
 /**
  * ViewModeSwitcher – UI control to switch between calendar display modes.
- * Requirements: 2.2
+ * Uses Design Token System for consistent theming.
+ * Requirements: 1.5, 2.2
  */
 
-import React, { useCallback } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -12,6 +13,7 @@ import {
   Platform,
 } from 'react-native';
 import type { DefaultViewMode } from '../types';
+import { useTokens } from '../tokens/designTokens';
 
 export interface ViewModeSwitcherProps {
   currentMode: DefaultViewMode;
@@ -26,9 +28,11 @@ const VIEW_MODES: { key: DefaultViewMode; label: string }[] = [
 ];
 
 export function ViewModeSwitcher({ currentMode, onModeChange }: ViewModeSwitcherProps) {
+  const tokens = useTokens();
+
   return (
     <View
-      style={styles.container}
+      style={[styles.container, { backgroundColor: tokens.colors.borderLight, borderRadius: tokens.radii.md }]}
       accessibilityRole="tablist"
       accessibilityLabel="Calendar view mode"
     >
@@ -37,14 +41,36 @@ export function ViewModeSwitcher({ currentMode, onModeChange }: ViewModeSwitcher
         return (
           <TouchableOpacity
             key={key}
-            style={[styles.tab, isActive && styles.tabActive]}
+            style={[
+              styles.tab,
+              { borderRadius: tokens.radii.md - 2 },
+              isActive && [
+                styles.tabActive,
+                {
+                  backgroundColor: tokens.colors.surface,
+                  ...(Platform.OS === 'web'
+                    ? ({ boxShadow: `0 1px 3px ${tokens.shadows.sm.shadowColor}` } as any)
+                    : { elevation: tokens.shadows.sm.elevation }),
+                },
+              ],
+            ]}
             onPress={() => onModeChange(key)}
             accessibilityRole="tab"
             accessibilityState={{ selected: isActive }}
             accessibilityLabel={`${label} view`}
             activeOpacity={0.7}
           >
-            <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
+            <Text
+              style={[
+                styles.tabText,
+                {
+                  color: isActive ? tokens.colors.primary : tokens.colors.textSecondary,
+                  fontWeight: isActive
+                    ? tokens.typography.weights.semibold
+                    : tokens.typography.weights.medium,
+                },
+              ]}
+            >
               {label}
             </Text>
           </TouchableOpacity>
@@ -57,31 +83,17 @@ export function ViewModeSwitcher({ currentMode, onModeChange }: ViewModeSwitcher
 const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
-    backgroundColor: '#F1F3F4',
-    borderRadius: 8,
     padding: 2,
     alignSelf: 'center',
   },
   tab: {
     paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 6,
     minWidth: 56,
     alignItems: 'center',
   },
-  tabActive: {
-    backgroundColor: '#FFFFFF',
-    ...(Platform.OS === 'web'
-      ? ({ boxShadow: '0 1px 3px rgba(0,0,0,0.12)' } as any)
-      : { elevation: 2 }),
-  },
+  tabActive: {},
   tabText: {
     fontSize: 13,
-    fontWeight: '500',
-    color: '#5F6368',
-  },
-  tabTextActive: {
-    color: '#1A73E8',
-    fontWeight: '600',
   },
 });

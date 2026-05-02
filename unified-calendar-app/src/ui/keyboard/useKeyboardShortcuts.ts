@@ -48,6 +48,17 @@ export interface UseKeyboardShortcutsConfig {
   onShowHelp: () => void;
   /** Called when Escape is pressed. Typically dismisses the help overlay. */
   onDismissHelp?: () => void;
+  /**
+   * Custom shortcut key overrides from the UIPreferences store.
+   * Maps shortcut IDs (matching `ShortcutDefinition.key`) to replacement
+   * key strings. Currently reserved for future custom shortcut support —
+   * when populated, the manager will re-register the affected shortcuts
+   * with the overridden key bindings.
+   *
+   * Wired from `useShortcutOverrides()` in the UIPreferences store
+   * (Task 18.10, Req 1.7).
+   */
+  shortcutOverrides?: Record<string, string>;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -145,12 +156,14 @@ function useKeyboardShortcutsWeb(
   const suppressedRef = useRef(suppressed);
   suppressedRef.current = suppressed;
 
-  // ── Build default shortcuts (once) ──────────────────────────────────────
+  // ── Build default shortcuts ─────────────────────────────────────────────
+  //
+  // The default shortcut definitions are stored in a ref so the override
+  // effect below can re-derive the registry when `shortcutOverrides` changes.
+
+  const defaultShortcutsRef = useRef<ShortcutDefinition[]>([]);
 
   useEffect(() => {
-    const cfg = configRef.current;
-    const ann = announceRef.current;
-
     const defaults: ShortcutDefinition[] = [
       {
         key: 'c',
@@ -245,11 +258,43 @@ function useKeyboardShortcutsWeb(
       },
     ];
 
+    defaultShortcutsRef.current = defaults;
+
     const registry = registryRef.current;
     for (const shortcut of defaults) {
       registry.set(shortcut.key, shortcut);
     }
   }, []); // run once on mount
+
+  // ── Apply shortcut overrides from UIPreferences (Task 18.10) ──────────
+  //
+  // When `shortcutOverrides` changes, re-derive the registry by applying
+  // overrides on top of the default shortcuts. An override maps the
+  // original key to a new key string — the action, label, and category
+  // stay the same. This is currently reserved for future custom shortcut
+  // support; the map is empty by default.
+
+  const shortcutOverrides = config.shortcutOverrides;
+
+  useEffect(() => {
+    const registry = registryRef.current;
+    const defaults = defaultShortcutsRef.current;
+    if (defaults.length === 0) return; // defaults not yet initialised
+
+    // Clear and rebuild from defaults + overrides
+    registry.clear();
+    const overrides = shortcutOverrides ?? {};
+
+    for (const shortcut of defaults) {
+      const overriddenKey = overrides[shortcut.key];
+      if (overriddenKey && overriddenKey !== shortcut.key) {
+        // Register under the overridden key, preserving the original action
+        registry.set(overriddenKey, { ...shortcut, key: overriddenKey });
+      } else {
+        registry.set(shortcut.key, shortcut);
+      }
+    }
+  }, [shortcutOverrides]);
 
   // ── Keydown listener ────────────────────────────────────────────────────
 

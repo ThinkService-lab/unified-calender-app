@@ -78,8 +78,8 @@ describe('getEventBorderColor', () => {
 });
 
 describe('CALENDAR_COLOR_PALETTE', () => {
-  test('has at least 10 distinct colors', () => {
-    expect(CALENDAR_COLOR_PALETTE.length).toBeGreaterThanOrEqual(10);
+  test('has at least 15 distinct colors (sourced from Design Token System)', () => {
+    expect(CALENDAR_COLOR_PALETTE.length).toBeGreaterThanOrEqual(15);
     const unique = new Set(CALENDAR_COLOR_PALETTE);
     expect(unique.size).toBe(CALENDAR_COLOR_PALETTE.length);
   });

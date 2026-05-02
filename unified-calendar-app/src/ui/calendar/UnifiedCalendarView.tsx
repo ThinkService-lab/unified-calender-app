@@ -2,24 +2,47 @@
  * UnifiedCalendarView – Main container that switches between display modes.
  * Color-codes events by calendar account, supports visibility toggling
  * with ≤ 200ms response time using optimistic local state.
- * Requirements: 2.1, 2.2, 2.3, 2.4, 2.6
+ *
+ * Task 18.2: SwipeNavigationHost wrapping for Day/Week/Month views,
+ * pull-to-refresh and gesture prop forwarding.
+ *
+ * Task 18.3: AnimatedViewModeSwitcher replaces static ViewModeSwitcher,
+ * ViewTransitionAnimator wraps view rendering for crossfade/slide
+ * transitions, and zoom transition wires Month_View day tap → Day_View.
+ *
+ * Task 18.6: CalendarSidebar wired into ResponsiveLayout for tablet/desktop
+ * breakpoints. Mini month navigator → anchor date, account toggles →
+ * hiddenAccountIds, upcoming events → event store.
+ *
+ * Task 18.7: StableMonthView replaces MonthView for debounced navigation
+ * (Req 6.1, 6.4). EmptyStateView renders when Day/Week/Agenda views have
+ * zero visible events (Req 16.1) or when no accounts are connected (Req 16.4).
+ *
+ * Requirements: 1.5, 2.1, 2.2, 2.3, 2.4, 2.6, 3.1, 3.3, 6.1, 6.4, 8.1, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 15.1, 15.2, 15.4, 16.1, 16.4, 19.1, 19.2, 19.4, 19.5, 19.6
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
 } from 'react-native';
+import Animated from 'react-native-reanimated';
 import type { CalendarEvent, CalendarAccount } from '../../types/models';
 import type { DefaultViewMode } from '../types';
 import { useBreakpoint } from '../useBreakpoint';
-import { ViewModeSwitcher } from './ViewModeSwitcher';
+import { useTokens } from '../tokens/designTokens';
+import { AnimatedViewModeSwitcher } from './AnimatedViewModeSwitcher';
+import { ViewTransitionAnimator } from '../animation/ViewTransitionAnimator';
+import { useZoomTransition } from '../animation/ViewTransitionAnimator';
 import { DayView } from './DayView';
 import { WeekView } from './WeekView';
-import { MonthView } from './MonthView';
+import { StableMonthView } from './StableMonthView';
 import { AgendaView } from './AgendaView';
+import { EmptyStateView } from './EmptyStateView';
+import type { EmptyStateContext } from './EmptyStateView';
+import { SwipeNavigationHost } from '../gestures/SwipeNavigationHost';
 import {
   filterVisibleEvents,
   filterEventsByTimeRange,
@@ -31,6 +54,15 @@ import {
 import { buildAccountColorMap } from './colorCoding';
 import { buildViewChangeAnnouncement } from '../accessibility/accessibilityUtils';
 import { useScreenReaderAnnouncement, useKeyboardNavigation, useReducedMotion } from '../accessibility/useAccessibility';
+import { useKeyboardShortcuts } from '../keyboard/useKeyboardShortcuts';
+import { ShortcutHelpOverlay } from '../keyboard/ShortcutHelpOverlay';
+import { ResponsiveLayout } from '../ResponsiveLayout';
+import { CalendarSidebar } from './CalendarSidebar';
+import { getUpcomingEvents } from './calendarSidebarUtils';
+import { useShortcutOverrides } from '../../stores/uiPreferencesStore';
+import type { EventCRUDService } from '../../events/eventCRUDService';
+import type { EventFormData } from '../editor/eventEditorViewModel';
+import type { ParsedEvent } from '../../nlp/naturalLanguageParser';
 
 export interface UnifiedCalendarViewProps {
   /** All events from all connected accounts */
@@ -45,6 +77,31 @@ export interface UnifiedCalendarViewProps {
   onEventPress?: (event: CalendarEvent) => void;
   /** Callback when a day is pressed (e.g., to switch to day view) */
   onDayPress?: (date: Date) => void;
+  /** Callback to update event times (drag reschedule) */
+  onReschedule?: (eventId: string, newStart: Date, newEnd: Date) => Promise<void>;
+  /** Callback to update event end time (drag resize) */
+  onResize?: (eventId: string, newEnd: Date) => Promise<void>;
+  /** Callback to create a new event inline */
+  onCreateEvent?: (start: Date, end: Date, title: string) => Promise<void>;
+  /** Sync callback for pull-to-refresh */
+  onSync?: () => Promise<void>;
+  /** Whether a sync is currently in progress */
+  isSyncing?: boolean;
+  /** Calendar account ID for Quick Create Bar event creation */
+  calendarAccountId?: string;
+  /** EventCRUDService instance for Quick Create Bar */
+  eventCRUDService?: EventCRUDService;
+  /** Called when Quick Create Bar falls back to the EventEditor */
+  onOpenEditor?: (options: {
+    initialValues: Partial<EventFormData>;
+    highlightRecurrenceSection: boolean;
+  }) => void;
+  /** Called after Quick Create Bar successfully creates an event */
+  onQuickCreateEvent?: (parsedEvent: ParsedEvent) => void;
+  /** Callback to open/focus the Quick Create Bar (for keyboard shortcut 'C') */
+  onOpenQuickCreate?: () => void;
+  /** Callback when user taps "Connect Account" in the first-launch empty state (Req 16.4) */
+  onConnectAccount?: () => void;
 }
 
 export function UnifiedCalendarView({
@@ -54,6 +111,17 @@ export function UnifiedCalendarView({
   initialDate,
   onEventPress,
   onDayPress: externalDayPress,
+  onReschedule,
+  onResize,
+  onCreateEvent,
+  onSync,
+  isSyncing = false,
+  calendarAccountId,
+  eventCRUDService,
+  onOpenEditor,
+  onQuickCreateEvent,
+  onOpenQuickCreate,
+  onConnectAccount,
 }: UnifiedCalendarViewProps) {
   const layout = useBreakpoint();
   const { announce } = useScreenReaderAnnouncement();
@@ -107,6 +175,42 @@ export function UnifiedCalendarView({
     [visibleEvents, dateRange]
   );
 
+  // Upcoming events for the sidebar (next 10 events from now)
+  const upcomingEvents = useMemo(
+    () => getUpcomingEvents(visibleEvents, new Date()),
+    [visibleEvents]
+  );
+
+  // ── Empty state detection (Req 16.1, 16.4) ───────────────────────────
+  // Determine if we should show an empty state and which context to use.
+  const emptyStateContext = useMemo((): EmptyStateContext | null => {
+    // First-launch: no calendar accounts connected at all (Req 16.4)
+    if (accounts.length === 0) {
+      return 'no-accounts';
+    }
+    // Only show empty states for day, week, and agenda views (not month)
+    if (viewMode === 'month') return null;
+    // Check if there are zero visible events in the current range
+    if (rangeEvents.length === 0) {
+      switch (viewMode) {
+        case 'day':
+          return 'day';
+        case 'week':
+          return 'week';
+        case 'agenda':
+          return 'agenda';
+        default:
+          return null;
+      }
+    }
+    return null;
+  }, [accounts.length, viewMode, rangeEvents.length]);
+
+  // Handler for the empty state "Create an event" CTA — opens Quick Create
+  const handleEmptyStateCreate = useCallback(() => {
+    onOpenQuickCreate?.();
+  }, [onOpenQuickCreate]);
+
   // Toggle calendar visibility (instant – optimistic local state)
   const toggleAccountVisibility = useCallback((accountId: string) => {
     setHiddenAccountIds((prev) => {
@@ -119,6 +223,17 @@ export function UnifiedCalendarView({
       return next;
     });
   }, []);
+
+  // Sidebar date selection — updates anchor date from mini month navigator (Req 19.2)
+  const handleSidebarDateSelect = useCallback((date: Date) => {
+    setAnchorDate(date);
+  }, []);
+
+  // Sidebar event press — navigate to the event's day and forward to onEventPress (Req 19.6)
+  const handleSidebarEventPress = useCallback((event: CalendarEvent) => {
+    setAnchorDate(event.startTime);
+    onEventPress?.(event);
+  }, [onEventPress]);
 
   // Navigation handlers
   const navigateForward = useCallback(() => {
@@ -167,18 +282,86 @@ export function UnifiedCalendarView({
     setAnchorDate(new Date());
   }, []);
 
-  // Day press handler – switch to day view
+  // ── Shortcut Help Overlay state (Req 11.5, 11.6) ─────────────────────
+  const [shortcutHelpVisible, setShortcutHelpVisible] = useState(false);
+
+  const toggleShortcutHelp = useCallback(() => {
+    setShortcutHelpVisible((prev) => !prev);
+  }, []);
+
+  const dismissShortcutHelp = useCallback(() => {
+    setShortcutHelpVisible(false);
+  }, []);
+
+  // ── Keyboard Shortcut Manager (Req 11.1–11.6, Task 18.10) ──────────────
+  // Wire shortcutOverrides from UIPreferences store for future custom
+  // shortcut support (currently unused but reserved).
+  const shortcutOverrides = useShortcutOverrides();
+
+  const shortcutManager = useKeyboardShortcuts({
+    onOpenQuickCreate: onOpenQuickCreate ?? (() => {}),
+    onNavigateToday: goToToday,
+    onSwitchView: handleViewModeChange,
+    onNavigateBack: navigateBack,
+    onNavigateForward: navigateForward,
+    onShowHelp: toggleShortcutHelp,
+    onDismissHelp: dismissShortcutHelp,
+    shortcutOverrides,
+  });
+
+  // ── Zoom transition: Month_View day tap → Day_View (Req 3.3) ──────────
+  // Tracks the origin rect of the tapped day cell for the zoom animation.
+  const zoomOriginRect = useRef({ x: 0, y: 0, width: 0, height: 0 });
+
+  // Pending date to navigate to after zoom completes.
+  const pendingZoomDate = useRef<Date | null>(null);
+
+  const { animatedStyle: zoomAnimatedStyle, startTransition: startZoom } =
+    useZoomTransition({
+      originRect: zoomOriginRect.current,
+      onComplete: () => {
+        // After zoom animation completes, commit the view mode change.
+        if (pendingZoomDate.current) {
+          setAnchorDate(pendingZoomDate.current);
+          setViewMode('day');
+          pendingZoomDate.current = null;
+        }
+      },
+    });
+
+  // Whether a zoom transition is currently active.
+  const [isZooming, setIsZooming] = useState(false);
+
+  // Day press handler – switch to day view (with zoom from month view)
   const handleDayPress = useCallback(
     (date: Date) => {
-      setAnchorDate(date);
       if (externalDayPress) {
+        setAnchorDate(date);
         externalDayPress(date);
-      } else {
-        setViewMode('day');
+        return;
       }
+
+      // When tapping a day in month view, trigger zoom transition (Req 3.3).
+      if (viewMode === 'month') {
+        pendingZoomDate.current = date;
+        setIsZooming(true);
+        startZoom();
+        // The actual view mode switch happens in onComplete above.
+        return;
+      }
+
+      setAnchorDate(date);
+      setViewMode('day');
     },
-    [externalDayPress]
+    [externalDayPress, viewMode, startZoom]
   );
+
+  // Reset zoom state when view mode changes (zoom completed or cancelled).
+  React.useEffect(() => {
+    if (viewMode === 'day' && isZooming) {
+      setIsZooming(false);
+    }
+  }, [viewMode, isZooming]);
 
   // Keyboard navigation for web (arrow keys, page up/down)
   useKeyboardNavigation(
@@ -244,10 +427,38 @@ export function UnifiedCalendarView({
     announce(buildViewChangeAnnouncement(viewMode, headerTitle), 'polite');
   }, [viewMode, headerTitle, announce]);
 
+  // Design tokens for dynamic styling
+  const tokens = useTokens();
+
+  // ── Calendar Sidebar for tablet/desktop (Req 19.1) ────────────────
+  const sidebarElement = useMemo(
+    () => (
+      <CalendarSidebar
+        anchorDate={anchorDate}
+        onDateSelect={handleSidebarDateSelect}
+        accounts={accounts}
+        hiddenAccountIds={hiddenAccountIds}
+        onToggleAccount={toggleAccountVisibility}
+        upcomingEvents={upcomingEvents}
+        onEventPress={handleSidebarEventPress}
+      />
+    ),
+    [
+      anchorDate,
+      handleSidebarDateSelect,
+      accounts,
+      hiddenAccountIds,
+      toggleAccountVisibility,
+      upcomingEvents,
+      handleSidebarEventPress,
+    ]
+  );
+
   return (
-    <View style={styles.container}>
+    <ResponsiveLayout sidebar={sidebarElement}>
+    <View style={[styles.container, { backgroundColor: tokens.colors.background }]}>
       {/* Header bar */}
-      <View style={styles.header}>
+      <View style={[styles.header, { borderBottomColor: tokens.colors.borderLight, backgroundColor: tokens.colors.surface }]}>
         <View style={styles.headerLeft}>
           <TouchableOpacity
             onPress={navigateBack}
@@ -255,15 +466,15 @@ export function UnifiedCalendarView({
             accessibilityRole="button"
             accessibilityLabel="Previous"
           >
-            <Text style={styles.navButtonText}>‹</Text>
+            <Text style={[styles.navButtonText, { color: tokens.colors.textSecondary }]}>‹</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={goToToday}
-            style={styles.todayButton}
+            style={[styles.todayButton, { borderColor: tokens.colors.border }]}
             accessibilityRole="button"
             accessibilityLabel="Go to today"
           >
-            <Text style={styles.todayButtonText}>Today</Text>
+            <Text style={[styles.todayButtonText, { color: tokens.colors.textPrimary }]}>Today</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={navigateForward}
@@ -271,54 +482,169 @@ export function UnifiedCalendarView({
             accessibilityRole="button"
             accessibilityLabel="Next"
           >
-            <Text style={styles.navButtonText}>›</Text>
+            <Text style={[styles.navButtonText, { color: tokens.colors.textSecondary }]}>›</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>{headerTitle}</Text>
+          <Text style={[styles.headerTitle, { color: tokens.colors.textPrimary, fontSize: tokens.typography.sizes.heading - 2 }]}>{headerTitle}</Text>
         </View>
-        <ViewModeSwitcher currentMode={viewMode} onModeChange={handleViewModeChange} />
+        <AnimatedViewModeSwitcher currentMode={viewMode} onModeChange={handleViewModeChange} />
       </View>
 
-      {/* Calendar view */}
-      <View style={styles.viewContainer}>
-        {viewMode === 'day' && (
-          <DayView
-            date={anchorDate}
-            events={rangeEvents}
-            accountColorMap={accountColorMap}
-            accountIndexMap={accountIndexMap}
-            onEventPress={onEventPress}
+      {/* Calendar view — wrapped with ViewTransitionAnimator for crossfade/slide transitions (Req 3.1) */}
+      <ViewTransitionAnimator activeView={viewMode}>
+        {(transitionStyle) => (
+          <Animated.View style={[styles.viewContainer, transitionStyle]}>
+            {/* First-launch empty state: no accounts connected (Req 16.4) */}
+            {emptyStateContext === 'no-accounts' && (
+              <EmptyStateView
+                context="no-accounts"
+                onCreateEvent={handleEmptyStateCreate}
+                onConnectAccount={onConnectAccount}
+              />
+            )}
+            {/* Normal view rendering (only when accounts exist) */}
+            {emptyStateContext !== 'no-accounts' && viewMode === 'day' && (
+          <SwipeNavigationHost
+            anchorDate={anchorDate}
+            unit="day"
+            onNavigateForward={navigateForward}
+            onNavigateBack={navigateBack}
+            renderView={(d) => {
+              const range = getDateRangeForViewMode('day', d);
+              const viewEvents = sortEventsByTime(filterEventsByTimeRange(visibleEvents, range.start, range.end));
+              if (viewEvents.length === 0) {
+                return (
+                  <EmptyStateView
+                    context="day"
+                    onCreateEvent={handleEmptyStateCreate}
+                  />
+                );
+              }
+              return (
+                <DayView
+                  date={d}
+                  events={viewEvents}
+                  accountColorMap={accountColorMap}
+                  accountIndexMap={accountIndexMap}
+                  onEventPress={onEventPress}
+                  onReschedule={onReschedule}
+                  onResize={onResize}
+                  onCreateEvent={onCreateEvent}
+                  onSync={onSync}
+                  isSyncing={isSyncing}
+                  calendarAccountId={calendarAccountId}
+                  eventCRUDService={eventCRUDService}
+                  onOpenEditor={onOpenEditor}
+                  onQuickCreateEvent={onQuickCreateEvent}
+                />
+              );
+            }}
           />
         )}
-        {viewMode === 'week' && (
-          <WeekView
-            date={anchorDate}
-            events={rangeEvents}
-            accountColorMap={accountColorMap}
-            accountIndexMap={accountIndexMap}
-            onEventPress={onEventPress}
-            onDayPress={handleDayPress}
+        {emptyStateContext !== 'no-accounts' && viewMode === 'week' && (
+          <SwipeNavigationHost
+            anchorDate={anchorDate}
+            unit="week"
+            onNavigateForward={navigateForward}
+            onNavigateBack={navigateBack}
+            renderView={(d) => {
+              const range = getDateRangeForViewMode('week', d);
+              const viewEvents = sortEventsByTime(filterEventsByTimeRange(visibleEvents, range.start, range.end));
+              if (viewEvents.length === 0) {
+                return (
+                  <EmptyStateView
+                    context="week"
+                    onCreateEvent={handleEmptyStateCreate}
+                  />
+                );
+              }
+              return (
+                <WeekView
+                  date={d}
+                  events={viewEvents}
+                  accountColorMap={accountColorMap}
+                  accountIndexMap={accountIndexMap}
+                  onEventPress={onEventPress}
+                  onDayPress={handleDayPress}
+                  onReschedule={onReschedule}
+                  onResize={onResize}
+                  onCreateEvent={onCreateEvent}
+                  onSync={onSync}
+                  isSyncing={isSyncing}
+                  calendarAccountId={calendarAccountId}
+                  eventCRUDService={eventCRUDService}
+                  onOpenEditor={onOpenEditor}
+                  onQuickCreateEvent={onQuickCreateEvent}
+                />
+              );
+            }}
           />
         )}
-        {viewMode === 'month' && (
-          <MonthView
-            date={anchorDate}
-            events={rangeEvents}
-            accountColorMap={accountColorMap}
-            accountIndexMap={accountIndexMap}
-            onDayPress={handleDayPress}
-            onEventPress={onEventPress}
+        {emptyStateContext !== 'no-accounts' && viewMode === 'month' && (
+          <SwipeNavigationHost
+            anchorDate={anchorDate}
+            unit="month"
+            onNavigateForward={navigateForward}
+            onNavigateBack={navigateBack}
+            renderView={(d) => {
+              const range = getDateRangeForViewMode('month', d);
+              const viewEvents = sortEventsByTime(filterEventsByTimeRange(visibleEvents, range.start, range.end));
+              return (
+                <StableMonthView
+                  requestedDate={d}
+                  events={viewEvents}
+                  accountColorMap={accountColorMap}
+                  accountIndexMap={accountIndexMap}
+                  onDayPress={handleDayPress}
+                  onEventPress={onEventPress}
+                  onSync={onSync}
+                  isSyncing={isSyncing}
+                />
+              );
+            }}
           />
         )}
-        {viewMode === 'agenda' && (
-          <AgendaView
-            events={rangeEvents}
-            accountColorMap={accountColorMap}
-            accountIndexMap={accountIndexMap}
-            onEventPress={onEventPress}
-          />
+            {emptyStateContext !== 'no-accounts' && viewMode === 'agenda' && (
+              rangeEvents.length === 0 ? (
+                <EmptyStateView
+                  context="agenda"
+                  onCreateEvent={handleEmptyStateCreate}
+                />
+              ) : (
+              <AgendaView
+                events={rangeEvents}
+                accountColorMap={accountColorMap}
+                accountIndexMap={accountIndexMap}
+                onEventPress={onEventPress}
+                calendarAccountId={calendarAccountId}
+                eventCRUDService={eventCRUDService}
+                onOpenEditor={onOpenEditor}
+                onQuickCreateEvent={onQuickCreateEvent}
+                onSync={onSync}
+                isSyncing={isSyncing}
+                onCreateEvent={handleEmptyStateCreate}
+              />
+              )
+            )}
+          </Animated.View>
         )}
-      </View>
+      </ViewTransitionAnimator>
+
+      {/* Zoom transition overlay for Month_View day tap → Day_View (Req 3.3) */}
+      {isZooming && (
+        <Animated.View
+          style={[StyleSheet.absoluteFill, zoomAnimatedStyle, { backgroundColor: tokens.colors.background }]}
+          pointerEvents="none"
+        />
+      )}
+
+      {/* Shortcut Help Overlay (Req 11.5, 11.6) */}
+      <ShortcutHelpOverlay
+        visible={shortcutHelpVisible}
+        shortcuts={shortcutManager.getShortcuts() as Record<'navigation' | 'creation' | 'view-switching', import('../keyboard/useKeyboardShortcuts').ShortcutDefinition[]>}
+        onDismiss={dismissShortcutHelp}
+      />
     </View>
+    </ResponsiveLayout>
   );
 }
 
@@ -332,7 +658,6 @@ export { filterVisibleEvents } from './calendarViewModel';
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
   },
   header: {
     flexDirection: 'row',
@@ -341,8 +666,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E0E0E0',
-    backgroundColor: '#FFFFFF',
   },
   headerLeft: {
     flexDirection: 'row',
@@ -358,7 +681,6 @@ const styles = StyleSheet.create({
   },
   navButtonText: {
     fontSize: 22,
-    color: '#5F6368',
     fontWeight: '300',
   },
   todayButton: {
@@ -366,18 +688,14 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: '#DADCE0',
     marginHorizontal: 4,
   },
   todayButtonText: {
     fontSize: 13,
     fontWeight: '500',
-    color: '#3C4043',
   },
   headerTitle: {
-    fontSize: 18,
     fontWeight: '600',
-    color: '#202124',
     marginLeft: 8,
   },
   viewContainer: {

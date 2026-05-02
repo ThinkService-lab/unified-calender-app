@@ -1,6 +1,22 @@
 /**
  * AgendaView – Scrollable list of upcoming events using FlatList with getItemLayout.
- * Requirements: 2.2, 2.3, 2.6
+ * Uses Design Token System for consistent theming and EventCard for
+ * micro-interaction wiring.
+ *
+ * Task 18.4: QuickCreateBar wired at the top of the view for NL event creation.
+ *   - Direct create via EventCRUDService for fully-parsed events
+ *   - Fallback to EventEditor with initialValues for partial parses
+ *   - highlightRecurrenceSection when confidence.recurrence === 'attempted_unresolved'
+ *
+ * Task 18.11: Pull-to-refresh integration (Req 9.1, 9.2, 9.3, 9.4, 9.5).
+ *   - usePullToRefresh connected to SyncEngine via onSync callback
+ *   - Rotating sync indicator via usePullToRefreshStyle micro-interaction
+ *   - AutoDismissBanner for sync failure display
+ *
+ * Task 18.12: EmptyStateView replaces inline empty state (Req 16.1–16.7).
+ *
+ * Requirements: 1.5, 1.6, 2.2, 2.3, 2.6, 5.1, 5.8, 7.1, 7.2, 7.3, 7.4,
+ *               9.1, 9.2, 9.3, 9.4, 9.5, 16.1, 16.2, 16.3, 16.6, 16.7, 17.8, 18.1
  */
 
 import React, { useMemo, useCallback } from 'react';
@@ -9,8 +25,9 @@ import {
   Text,
   FlatList,
   StyleSheet,
-  TouchableOpacity,
 } from 'react-native';
+import Animated from 'react-native-reanimated';
+import { GestureDetector } from 'react-native-gesture-handler';
 import type { CalendarEvent } from '../../types/models';
 import {
   groupEventsByDay,
@@ -18,8 +35,17 @@ import {
   sortEventsByTime,
   type AgendaGroup,
 } from './calendarViewModel';
-import { getEventBackgroundColor, getEventBorderColor } from './colorCoding';
 import { getCalendarPatternIcon } from '../accessibility/calendarPatterns';
+import { useTokens, type DesignTokens } from '../tokens/designTokens';
+import { EventCard } from './EventCard';
+import { EmptyStateView } from './EmptyStateView';
+import { QuickCreateBar } from './QuickCreateBar';
+import type { QuickCreateBarProps } from './QuickCreateBar';
+import { usePullToRefresh } from '../gestures/usePullToRefresh';
+import { AutoDismissBanner } from '../gestures/AutoDismissBanner';
+import type { EventCRUDService } from '../../events/eventCRUDService';
+import type { EventFormData } from '../editor/eventEditorViewModel';
+import type { ParsedEvent } from '../../nlp/naturalLanguageParser';
 
 export interface AgendaViewProps {
   events: CalendarEvent[];
@@ -27,6 +53,23 @@ export interface AgendaViewProps {
   /** Map of accountId → index for pattern assignment */
   accountIndexMap?: Record<string, number>;
   onEventPress?: (event: CalendarEvent) => void;
+  /** Calendar account ID for Quick Create Bar event creation */
+  calendarAccountId?: string;
+  /** EventCRUDService instance for Quick Create Bar */
+  eventCRUDService?: EventCRUDService;
+  /** Called when Quick Create Bar falls back to the EventEditor */
+  onOpenEditor?: (options: {
+    initialValues: Partial<EventFormData>;
+    highlightRecurrenceSection: boolean;
+  }) => void;
+  /** Called after Quick Create Bar successfully creates an event */
+  onQuickCreateEvent?: (parsedEvent: ParsedEvent) => void;
+  /** Sync callback for pull-to-refresh (Req 9.1) */
+  onSync?: () => Promise<void>;
+  /** Whether a sync is currently in progress */
+  isSyncing?: boolean;
+  /** Called when the empty state "Create an event" CTA is tapped (Req 16.3) */
+  onCreateEvent?: () => void;
 }
 
 /**
@@ -87,10 +130,40 @@ function isSameDaySimple(a: Date, b: Date): boolean {
   );
 }
 
-export function AgendaView({ events, accountColorMap, accountIndexMap, onEventPress }: AgendaViewProps) {
+export function AgendaView({
+  events,
+  accountColorMap,
+  accountIndexMap,
+  onEventPress,
+  calendarAccountId,
+  eventCRUDService,
+  onOpenEditor,
+  onQuickCreateEvent,
+  onSync,
+  isSyncing = false,
+  onCreateEvent,
+}: AgendaViewProps) {
+  const tokens = useTokens();
   const sortedEvents = useMemo(() => sortEventsByTime(events), [events]);
   const groups = useMemo(() => groupEventsByDay(sortedEvents), [sortedEvents]);
   const flatItems = useMemo(() => flattenAgendaGroups(groups), [groups]);
+
+  // ── Pull-to-refresh (Req 9.1, 9.2, 9.3, 9.4, 9.5) ─────────────────────
+  const {
+    gesture: pullGesture,
+    indicatorStyle: pullIndicatorStyle,
+    rotationStyle: pullRotationStyle,
+    error: pullError,
+  } = usePullToRefresh({
+    triggerDistance: 80,
+    onSync: onSync ?? (async () => {}),
+    isSyncing,
+  });
+
+  // ── Empty state CTA handler ──────────────────────────────────────────────
+  const handleEmptyStateCreate = useCallback(() => {
+    onCreateEvent?.();
+  }, [onCreateEvent]);
 
   const getItemLayout = useCallback(
     (_data: any, index: number) => {
@@ -111,80 +184,125 @@ export function AgendaView({ events, accountColorMap, accountIndexMap, onEventPr
     ({ item }: { item: AgendaItem }) => {
       if (item.type === 'header') {
         return (
-          <View style={styles.dayHeader} accessibilityRole="header">
-            <Text style={styles.dayHeaderText}>{item.dateLabel}</Text>
+          <View style={[styles.dayHeader, { backgroundColor: tokens.colors.surfaceElevated }]} accessibilityRole="header">
+            <Text style={[styles.dayHeaderText, { color: tokens.colors.textPrimary }]}>{item.dateLabel}</Text>
           </View>
         );
       }
 
       const event = item.event!;
-      const color = accountColorMap[event.calendarAccountId] || '#1A73E8';
+      const color = accountColorMap[event.calendarAccountId] || tokens.colors.primary;
+      const prefix = accountIndexMap
+        ? getCalendarPatternIcon(accountIndexMap[event.calendarAccountId] ?? 0)
+        : undefined;
 
       return (
-        <TouchableOpacity
-          style={[
-            styles.eventCard,
-            {
-              backgroundColor: getEventBackgroundColor(color),
-              borderLeftColor: color,
-            },
-          ]}
-          onPress={() => onEventPress?.(event)}
-          accessibilityRole="button"
-          accessibilityLabel={`${event.title}, ${formatTime(event.startTime)} to ${formatTime(event.endTime)}`}
-          activeOpacity={0.7}
-        >
-          <View style={styles.eventTimeColumn}>
-            <Text style={[styles.eventTimeText, { color }]}>
-              {event.isAllDay ? 'All day' : formatTime(event.startTime)}
-            </Text>
-            {!event.isAllDay && (
-              <Text style={styles.eventEndTime}>
-                {formatTime(event.endTime)}
-              </Text>
-            )}
-          </View>
-          <View style={styles.eventDetails}>
-            <Text style={styles.eventTitle} numberOfLines={1}>
-              {accountIndexMap ? `${getCalendarPatternIcon(accountIndexMap[event.calendarAccountId] ?? 0)} ` : ''}{event.title}
-            </Text>
-            {event.location && (
-              <Text style={styles.eventLocation} numberOfLines={1}>
-                📍 {event.location}
-              </Text>
-            )}
-          </View>
-        </TouchableOpacity>
+        <View style={styles.eventCardWrapper}>
+          <EventCard
+            event={event}
+            color={color}
+            onPress={onEventPress}
+            prefixIcon={prefix}
+            style={{
+              height: EVENT_ITEM_HEIGHT,
+              flexDirection: 'row',
+              alignItems: 'center',
+              marginHorizontal: tokens.spacing.md,
+              borderRadius: tokens.radii.md,
+              borderLeftWidth: 4,
+              paddingHorizontal: tokens.spacing.md,
+              paddingVertical: tokens.spacing.sm + 2,
+            }}
+            accessibilityLabel={`${event.title}, ${formatTime(event.startTime)} to ${formatTime(event.endTime)}`}
+          >
+            <View style={styles.eventContent}>
+              <View style={styles.eventTimeColumn}>
+                <Text style={[styles.eventTimeText, { color }]}>
+                  {event.isAllDay ? 'All day' : formatTime(event.startTime)}
+                </Text>
+                {!event.isAllDay && (
+                  <Text style={[styles.eventEndTime, { color: tokens.colors.textMuted }]}>
+                    {formatTime(event.endTime)}
+                  </Text>
+                )}
+              </View>
+              <View style={styles.eventDetails}>
+                {event.location && (
+                  <Text style={[styles.eventLocation, { color: tokens.colors.textSecondary }]} numberOfLines={1}>
+                    📍 {event.location}
+                  </Text>
+                )}
+              </View>
+            </View>
+          </EventCard>
+        </View>
       );
     },
-    [accountColorMap, onEventPress]
+    [accountColorMap, accountIndexMap, onEventPress, tokens]
   );
 
   const keyExtractor = useCallback((item: AgendaItem) => item.key, []);
 
+  // ── Empty state: use EmptyStateView component (Req 16.1, 16.2, 16.3) ────
   if (flatItems.length === 0) {
     return (
-      <View style={styles.emptyContainer}>
-        <Text style={styles.emptyText}>No upcoming events</Text>
-        <Text style={styles.emptySubtext}>Your schedule is clear</Text>
+      <View style={[styles.emptyWrapper, { backgroundColor: tokens.colors.background }]}>
+        {/* Quick Create Bar (Req 5.1, 5.8, 17.8, 18.1) */}
+        {calendarAccountId != null && eventCRUDService != null && onOpenEditor != null && (
+          <QuickCreateBar
+            calendarAccountId={calendarAccountId}
+            eventCRUDService={eventCRUDService}
+            onOpenEditor={onOpenEditor}
+            onEventCreated={onQuickCreateEvent}
+          />
+        )}
+        <EmptyStateView
+          context="agenda"
+          onCreateEvent={handleEmptyStateCreate}
+        />
       </View>
     );
   }
 
   return (
-    <FlatList
-      data={flatItems}
-      renderItem={renderItem}
-      keyExtractor={keyExtractor}
-      getItemLayout={getItemLayout}
-      style={styles.list}
-      contentContainerStyle={styles.listContent}
-      showsVerticalScrollIndicator={false}
-      ItemSeparatorComponent={Separator}
-      initialNumToRender={20}
-      maxToRenderPerBatch={15}
-      windowSize={11}
-    />
+    <View style={{ flex: 1, backgroundColor: tokens.colors.surfaceElevated }}>
+      {/* Quick Create Bar (Req 5.1, 5.8, 17.8, 18.1) */}
+      {calendarAccountId != null && eventCRUDService != null && onOpenEditor != null && (
+        <QuickCreateBar
+          calendarAccountId={calendarAccountId}
+          eventCRUDService={eventCRUDService}
+          onOpenEditor={onOpenEditor}
+          onEventCreated={onQuickCreateEvent}
+        />
+      )}
+
+      {/* Pull-to-refresh gesture wrapper (Req 9.1) */}
+      <GestureDetector gesture={pullGesture}>
+        <View style={styles.scrollWrapper}>
+          {/* Sync error banner (Req 9.4) */}
+          <AutoDismissBanner message={pullError} />
+
+          {/* Pull-to-refresh indicator (Req 9.2, 9.3) */}
+          <Animated.View style={[styles.pullIndicator, pullIndicatorStyle, pullRotationStyle]}>
+            <Text style={[styles.pullIndicatorText, { color: tokens.colors.primary }]}>↻</Text>
+          </Animated.View>
+
+          <FlatList
+            data={flatItems}
+            renderItem={renderItem}
+            keyExtractor={keyExtractor}
+            getItemLayout={getItemLayout}
+            style={[styles.list, { backgroundColor: tokens.colors.surfaceElevated }]}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            ItemSeparatorComponent={Separator}
+            initialNumToRender={20}
+            maxToRenderPerBatch={15}
+            windowSize={11}
+          />
+        </View>
+      </GestureDetector>
+    </View>
   );
 }
 
@@ -195,7 +313,6 @@ function Separator() {
 const styles = StyleSheet.create({
   list: {
     flex: 1,
-    backgroundColor: '#FAFAFA',
   },
   listContent: {
     paddingBottom: 20,
@@ -204,24 +321,19 @@ const styles = StyleSheet.create({
     height: DAY_HEADER_HEIGHT,
     justifyContent: 'center',
     paddingHorizontal: 16,
-    backgroundColor: '#FAFAFA',
   },
   dayHeaderText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#3C4043',
     letterSpacing: 0.2,
   },
-  eventCard: {
-    height: EVENT_ITEM_HEIGHT,
+  eventCardWrapper: {
+    // Wrapper to let EventCard handle its own layout
+  },
+  eventContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: 12,
-    borderRadius: 8,
-    borderLeftWidth: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: '#FFFFFF',
+    flex: 1,
   },
   eventTimeColumn: {
     width: 56,
@@ -233,39 +345,36 @@ const styles = StyleSheet.create({
   },
   eventEndTime: {
     fontSize: 11,
-    color: '#80868B',
     marginTop: 2,
   },
   eventDetails: {
     flex: 1,
   },
-  eventTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#202124',
-  },
   eventLocation: {
     fontSize: 12,
-    color: '#5F6368',
     marginTop: 4,
   },
   separator: {
     height: SEPARATOR_HEIGHT,
   },
-  emptyContainer: {
+  emptyWrapper: {
     flex: 1,
+  },
+  scrollWrapper: {
+    flex: 1,
+    position: 'relative',
+  },
+  pullIndicator: {
+    position: 'absolute',
+    top: -40,
+    left: 0,
+    right: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 60,
+    height: 40,
+    zIndex: 10,
   },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#3C4043',
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: '#80868B',
-    marginTop: 8,
+  pullIndicatorText: {
+    fontSize: 24,
   },
 });

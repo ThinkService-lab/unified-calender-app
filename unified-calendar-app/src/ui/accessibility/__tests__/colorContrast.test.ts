@@ -103,45 +103,34 @@ describe('CALENDAR_COLOR_PALETTE contrast validation', () => {
   /**
    * WCAG AA Contrast Audit against white (#FFFFFF):
    *
-   * Colors that FAIL AA UI contrast (3:1):
-   *   - #F9AB00 Amber (ratio: ~1.93) — NEEDS ADJUSTMENT for both text and UI use
-   *
-   * Colors that FAIL AA text contrast (4.5:1) but PASS UI (3:1):
-   *   - #E8710A Orange (ratio: ~3.09)
-   *   - #129EAF Teal (ratio: ~3.21)
-   *   - #00897B Dark Teal (ratio: ~4.32)
-   *   - #E91E63 Pink (ratio: ~4.35)
-   *
-   * These colors should be used with darker backgrounds or paired with
-   * patterns/icons (see calendarPatterns.ts) to ensure accessibility.
+   * The event palette (sourced from the Design Token System) was
+   * specifically chosen so that every colour meets WCAG AA contrast
+   * for both normal text (≥ 4.5:1) and UI components (≥ 3:1) against
+   * a white background.  If a future palette change introduces a
+   * colour that fails, these tests will catch it.
    */
 
-  // Known colors that fail UI contrast — documented for future adjustment
-  const KNOWN_FAILING_UI_COLORS = ['#F9AB00'];
-
-  it('most palette colors meet AA UI contrast (3:1) against white', () => {
+  it('all palette colors meet AA UI contrast (3:1) against white', () => {
     const report = validatePaletteContrast(CALENDAR_COLOR_PALETTE, WHITE);
     const failingUI = report.filter((r) => !r.meetsAAUI);
 
-    // Only the known failing colors should fail
-    expect(failingUI.map((r) => r.color)).toEqual(KNOWN_FAILING_UI_COLORS);
+    // Every colour in the current palette passes UI contrast
+    expect(failingUI).toEqual([]);
 
-    // All non-failing colors pass
+    // All colors pass
     const passingUI = report.filter((r) => r.meetsAAUI);
-    expect(passingUI.length).toBe(CALENDAR_COLOR_PALETTE.length - KNOWN_FAILING_UI_COLORS.length);
+    expect(passingUI.length).toBe(CALENDAR_COLOR_PALETTE.length);
   });
 
-  it('documents which palette colors need adjustment for text contrast (4.5:1)', () => {
+  it('all palette colors meet AA text contrast (4.5:1) against white', () => {
     const report = validatePaletteContrast(CALENDAR_COLOR_PALETTE, WHITE);
     const failingText = report.filter((r) => !r.meetsAAText);
 
-    // Document: these colors do not meet 4.5:1 for normal text on white
-    // They are paired with patterns/icons for color-blind accessibility
-    expect(failingText.length).toBeGreaterThan(0);
+    // Every colour in the current palette passes text contrast
+    expect(failingText).toEqual([]);
 
     // All passing colors should have ratio >= 4.5
-    const passingText = report.filter((r) => r.meetsAAText);
-    for (const entry of passingText) {
+    for (const entry of report) {
       expect(entry.ratio).toBeGreaterThanOrEqual(4.5);
     }
   });

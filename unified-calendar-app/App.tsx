@@ -1,14 +1,27 @@
 /**
  * Main App entry point - renders the Unified Calendar View with sample data
  * for demonstration and E2E testing purposes.
+ *
+ * Onboarding integration (Req 20.1, 20.7):
+ * - On first launch, shows the OnboardingAnimator as a full-screen overlay.
+ * - Uses OnboardingManager.isComplete(userId) as the single source of truth
+ *   for whether onboarding has been completed or skipped.
+ * - Does NOT store onboarding state in UIPreferences to avoid duplicated state.
  */
 
-import React from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { StyleSheet, View, Text, SafeAreaView, Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import { UnifiedCalendarView } from './src/ui/calendar/UnifiedCalendarView';
+import OnboardingAnimator from './src/ui/onboarding/OnboardingAnimator';
+import { createOnboardingManager } from './src/onboarding/onboardingManager';
+import type { OnboardingManager } from './src/onboarding/onboardingManager';
+import type { DatabaseDriver } from './src/db/database';
 import type { CalendarEvent, CalendarAccount } from './src/types/models';
+
+/** The demo user ID used throughout the sample app. */
+const DEMO_USER_ID = 'user-1';
 
 // Sample accounts for demonstration
 const SAMPLE_ACCOUNTS: CalendarAccount[] = [
@@ -215,8 +228,95 @@ function generateSampleEvents(): CalendarEvent[] {
   return events;
 }
 
+/**
+ * Creates a lightweight in-memory database driver for the demo app.
+ * In production, this would be replaced by the platform-specific SQLite driver
+ * initialized during the full app bootstrap.
+ */
+function createInMemoryDb(): DatabaseDriver {
+  const tables = new Map<string, Array<Record<string, unknown>>>();
+
+  return {
+    async execute(sql: string, params?: unknown[]): Promise<void> {
+      // Minimal in-memory implementation for onboarding_state table
+      if (sql.includes('CREATE TABLE') || sql.includes('PRAGMA')) return;
+
+      if (sql.includes('INSERT INTO onboarding_state')) {
+        const rows = tables.get('onboarding_state') ?? [];
+        rows.push({
+          user_id: params?.[0],
+          current_step: params?.[1],
+          completed_steps: params?.[2],
+          skipped: params?.[3],
+          first_opened_at: params?.[4],
+          tooltips_dismissed: params?.[5],
+        });
+        tables.set('onboarding_state', rows);
+        return;
+      }
+
+      if (sql.includes('UPDATE onboarding_state')) {
+        const rows = tables.get('onboarding_state') ?? [];
+        const userId = params?.[5];
+        const idx = rows.findIndex((r) => r.user_id === userId);
+        if (idx >= 0) {
+          rows[idx] = {
+            user_id: userId,
+            current_step: params?.[0],
+            completed_steps: params?.[1],
+            skipped: params?.[2],
+            first_opened_at: params?.[3],
+            tooltips_dismissed: params?.[4],
+          };
+        }
+        return;
+      }
+    },
+
+    async query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
+      if (sql.includes('FROM onboarding_state')) {
+        const rows = tables.get('onboarding_state') ?? [];
+        const userId = params?.[0];
+        const matches = rows.filter((r) => r.user_id === userId);
+        return matches as T[];
+      }
+      return [];
+    },
+
+    async close(): Promise<void> {},
+    isOpen(): boolean { return true; },
+  };
+}
+
 export default function App() {
   const events = React.useMemo(() => generateSampleEvents(), []);
+
+  // Onboarding state — null means "still loading", true/false once resolved
+  const [showOnboarding, setShowOnboarding] = useState<boolean | null>(null);
+  const onboardingManagerRef = useRef<OnboardingManager | null>(null);
+
+  // Initialize OnboardingManager and check completion state on mount
+  useEffect(() => {
+    const db = createInMemoryDb();
+    const manager = createOnboardingManager({ db });
+    onboardingManagerRef.current = manager;
+
+    manager.isComplete(DEMO_USER_ID).then((complete) => {
+      setShowOnboarding(!complete);
+    }).catch(() => {
+      // If we can't determine onboarding state, skip to main view
+      setShowOnboarding(false);
+    });
+  }, []);
+
+  // Callback when onboarding completes or is skipped — dismiss the overlay
+  const handleOnboardingComplete = useCallback(() => {
+    setShowOnboarding(false);
+  }, []);
+
+  // While loading onboarding state, render the main app shell without the overlay
+  // to avoid a flash of empty content
+  const isLoading = showOnboarding === null;
 
   return (
     <GestureHandlerRootView style={styles.gestureRoot}>
@@ -234,6 +334,16 @@ export default function App() {
             />
           </View>
         </View>
+        {/* Onboarding overlay — renders on top of the main calendar content */}
+        {!isLoading && showOnboarding && onboardingManagerRef.current && (
+          <View style={styles.onboardingOverlay} testID="onboarding-overlay">
+            <OnboardingAnimator
+              onComplete={handleOnboardingComplete}
+              onboardingManager={onboardingManagerRef.current}
+              userId={DEMO_USER_ID}
+            />
+          </View>
+        )}
         <StatusBar style="auto" />
       </SafeAreaView>
     </GestureHandlerRootView>
@@ -271,5 +381,9 @@ const styles = StyleSheet.create({
   },
   calendarContainer: {
     flex: 1,
+  },
+  onboardingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 10,
   },
 });

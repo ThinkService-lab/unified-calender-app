@@ -24,6 +24,10 @@ export type { AgendaViewProps } from './AgendaView';
 export { ViewModeSwitcher } from './ViewModeSwitcher';
 export type { ViewModeSwitcherProps } from './ViewModeSwitcher';
 
+// Event Card (shared event rendering with micro-interactions)
+export { EventCard } from './EventCard';
+export type { EventCardProps } from './EventCard';
+
 // Animated view mode switcher (sliding indicator)
 export { AnimatedViewModeSwitcher } from './AnimatedViewModeSwitcher';
 export type { AnimatedViewModeSwitcherProps } from './AnimatedViewModeSwitcher';

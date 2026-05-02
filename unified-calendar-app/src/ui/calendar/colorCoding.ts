@@ -1,28 +1,27 @@
 /**
  * Color-coding utility for calendar accounts.
  * Assigns distinct, accessible colors to each calendar account.
- * Requirements: 2.3
+ *
+ * The palette is sourced from the Design Token System so that event
+ * colours stay consistent with the active theme (light / dark) and
+ * meet WCAG 2.1 AA contrast ratios automatically.
+ *
+ * Requirements: 1.5, 1.6, 2.3
  */
 
+import { lightTokens } from '../tokens/designTokens';
+
 /**
- * A palette of 12 distinct, accessible colors.
- * Each color meets WCAG 2.1 AA contrast ratio (≥ 4.5:1) against white backgrounds
- * when used for text, and ≥ 3:1 for UI elements.
+ * Default event colour palette sourced from the Design Token System.
+ * Contains 15 distinct, WCAG AA-compliant colours. Components that
+ * need the theme-aware palette at render time should call
+ * `useTokens().colors.eventPalette` instead of referencing this
+ * constant directly.
+ *
+ * Kept as a module-level export for backwards compatibility with
+ * non-React call sites (tests, utilities) that cannot invoke hooks.
  */
-export const CALENDAR_COLOR_PALETTE: readonly string[] = [
-  '#1A73E8', // Blue
-  '#D93025', // Red
-  '#188038', // Green
-  '#F9AB00', // Amber
-  '#A142F4', // Purple
-  '#E8710A', // Orange
-  '#129EAF', // Teal
-  '#C5221F', // Dark Red
-  '#1967D2', // Royal Blue
-  '#5C6BC0', // Indigo
-  '#00897B', // Dark Teal
-  '#E91E63', // Pink
-] as const;
+export const CALENDAR_COLOR_PALETTE: readonly string[] = lightTokens.colors.eventPalette;
 
 /**
  * Returns the color for a given calendar account.
