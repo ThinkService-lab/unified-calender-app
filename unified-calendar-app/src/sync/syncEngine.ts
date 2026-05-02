@@ -31,6 +31,8 @@ import type {
   SyncEngine,
   SyncNotificationCallback,
 } from './types';
+// Security Review 2026-05-01: Finding H2 — replaced Math.random() ID with crypto
+import { cryptoId, cryptoUUID } from '../utils/cryptoId';
 
 /** Default polling interval: 5 minutes (Req 4.4) */
 const DEFAULT_POLLING_INTERVAL_MS = 300_000;
@@ -73,10 +75,11 @@ function calculateRetryDelay(retryCount: number): number {
 }
 
 /**
- * Generate a simple unique ID.
+ * @deprecated Use cryptoId() or cryptoUUID() from '../utils/cryptoId' instead.
+ * Kept as re-export for backward compatibility with tests.
  */
 function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return cryptoId();
 }
 
 export function createSyncEngine(config: SyncEngineConfig): SyncEngine {
@@ -343,10 +346,30 @@ export function createSyncEngine(config: SyncEngineConfig): SyncEngine {
     const detectedConflicts: SyncConflict[] = [];
 
     // Process created events
+    // Security Review 2026-05-01: Finding M1 — use actual provider data instead of placeholders
     for (const created of changes.created) {
       const providerEventId = created.id ?? generateId();
       const now = Date.now();
       const eventId = generateId();
+
+      // Extract actual event data from provider response when available
+      const pd = created.providerData ?? {};
+      const title = (typeof pd.title === 'string' ? pd.title : null)
+        ?? (typeof pd.summary === 'string' ? pd.summary : null)
+        ?? (typeof pd.subject === 'string' ? pd.subject : null)
+        ?? 'Untitled Event';
+      const description = typeof pd.description === 'string' ? pd.description : null;
+      const location = typeof pd.location === 'string' ? pd.location : null;
+      const startTime = typeof pd.startTime === 'number' ? pd.startTime
+        : (pd.start && typeof (pd.start as Record<string, unknown>).dateTime === 'string'
+          ? new Date((pd.start as Record<string, unknown>).dateTime as string).getTime()
+          : now);
+      const endTime = typeof pd.endTime === 'number' ? pd.endTime
+        : (pd.end && typeof (pd.end as Record<string, unknown>).dateTime === 'string'
+          ? new Date((pd.end as Record<string, unknown>).dateTime as string).getTime()
+          : startTime + 3600000);
+      const timeZone = typeof pd.timeZone === 'string' ? pd.timeZone : 'UTC';
+      const isAllDay = pd.isAllDay === true ? 1 : 0;
 
       await db.execute(
         `INSERT OR IGNORE INTO events (id, provider_event_id, calendar_account_id, title, description, location, start_time, end_time, time_zone, is_all_day, sequence, dtstamp, sync_status, local_version, created_at, updated_at)
@@ -355,13 +378,13 @@ export function createSyncEngine(config: SyncEngineConfig): SyncEngine {
           eventId,
           providerEventId,
           accountId,
-          'Synced Event',
-          null,
-          null,
-          now,
-          now + 3600000,
-          'UTC',
-          0,
+          title,
+          description,
+          location,
+          startTime,
+          endTime,
+          timeZone,
+          isAllDay,
           0,
           now,
           'synced',

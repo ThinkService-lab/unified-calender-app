@@ -10,6 +10,63 @@ import type { DatabaseDriver } from './database';
 import { getSchemaVersion } from './database';
 import { SCHEMA_VERSION } from './schema';
 
+// Security Review 2026-05-01: Finding C1 — SQL identifier whitelisting
+// Derived from schema.ts to stay in sync with the actual schema.
+
+/** Whitelist of valid table names for backup/restore operations. */
+const VALID_TABLE_NAMES: ReadonlySet<string> = new Set([
+  'calendar_accounts',
+  'events',
+  'sync_queue',
+  'user_subscription',
+  'privacy_preferences',
+  'event_visibility_overrides',
+  'scheduling_preferences',
+  'auth_events',
+  'onboarding_state',
+  'shared_views',
+  'shared_view_members',
+  'delegation_grants',
+  'deletion_requests',
+]);
+
+/** Whitelist of valid column names per table for restore operations. */
+const VALID_COLUMNS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['calendar_accounts', new Set(['id', 'user_id', 'provider_id', 'display_name', 'email', 'color', 'visibility', 'sync_token', 'last_synced_at', 'status', 'created_at'])],
+  ['events', new Set(['id', 'provider_event_id', 'calendar_account_id', 'title', 'description', 'location', 'start_time', 'end_time', 'time_zone', 'is_all_day', 'recurrence_rule', 'recurrence_exception_date', 'parent_recurring_event_id', 'organizer', 'attendees', 'sequence', 'dtstamp', 'status', 'visibility_override', 'opaque_fields', 'sync_status', 'local_version', 'remote_etag', 'modified_by', 'created_at', 'updated_at'])],
+  ['sync_queue', new Set(['id', 'calendar_account_id', 'event_id', 'operation', 'payload', 'retry_count', 'max_retries', 'next_retry_at', 'status', 'created_at'])],
+  ['user_subscription', new Set(['user_id', 'tier', 'platform', 'receipt_id', 'expires_at', 'grace_period_ends_at', 'auto_renew', 'connected_account_count'])],
+  ['privacy_preferences', new Set(['calendar_id', 'visibility'])],
+  ['event_visibility_overrides', new Set(['event_id', 'visibility'])],
+  ['scheduling_preferences', new Set(['user_id', 'preferred_start_hour', 'preferred_end_hour', 'minimum_buffer_minutes', 'max_meetings_per_day', 'focus_time_blocks', 'learned_patterns'])],
+  ['auth_events', new Set(['id', 'user_id', 'event_type', 'platform', 'ip_address', 'user_agent', 'timestamp'])],
+  ['onboarding_state', new Set(['user_id', 'current_step', 'completed_steps', 'skipped', 'first_opened_at', 'tooltips_dismissed'])],
+  ['shared_views', new Set(['id', 'owner_id', 'name', 'calendar_ids', 'max_members', 'created_at'])],
+  ['shared_view_members', new Set(['view_id', 'user_id', 'permission', 'added_at'])],
+  ['delegation_grants', new Set(['id', 'delegator_id', 'delegate_id', 'calendar_ids', 'permission', 'granted_at', 'revoked_at'])],
+  ['deletion_requests', new Set(['id', 'user_id', 'requested_at', 'scheduled_completion_at', 'status'])],
+]);
+
+/**
+ * Validate that a table name is in the whitelist.
+ * Throws if the name is not recognized.
+ */
+function validateTableName(table: string): void {
+  if (!VALID_TABLE_NAMES.has(table)) {
+    throw new Error(`Invalid table name for backup/restore: "${table}"`);
+  }
+}
+
+/**
+ * Filter column names to only those in the whitelist for the given table.
+ * Returns only valid columns, silently dropping any unrecognized ones.
+ */
+function filterValidColumns(table: string, columns: string[]): string[] {
+  const validSet = VALID_COLUMNS.get(table);
+  if (!validSet) return [];
+  return columns.filter((col) => validSet.has(col));
+}
+
 /**
  * A single migration step that transforms the schema from one version to the next.
  */
@@ -271,6 +328,8 @@ export class MigrationRunner {
     const tables: Record<string, Record<string, unknown>[]> = {};
 
     for (const table of tablesToBackup) {
+      // Security Review 2026-05-01: Finding C1 — validate table name before use in SQL
+      validateTableName(table);
       try {
         const rows = await this.driver.query<Record<string, unknown>>(
           `SELECT * FROM ${table}`
@@ -297,6 +356,13 @@ export class MigrationRunner {
     for (const [table, rows] of Object.entries(backup.tables)) {
       if (rows.length === 0) continue;
 
+      // Security Review 2026-05-01: Finding C1 — validate table and column names
+      try {
+        validateTableName(table);
+      } catch {
+        continue; // Skip unrecognized tables from backup
+      }
+
       // Clear existing data
       try {
         await this.driver.execute(`DELETE FROM ${table}`);
@@ -304,14 +370,17 @@ export class MigrationRunner {
         continue; // Table might not exist
       }
 
-      // Re-insert backed up rows
+      // Re-insert backed up rows with validated column names
       for (const row of rows) {
-        const columns = Object.keys(row);
-        const placeholders = columns.map(() => '?').join(', ');
-        const values = columns.map((col) => row[col]);
+        const allColumns = Object.keys(row);
+        const validColumns = filterValidColumns(table, allColumns);
+        if (validColumns.length === 0) continue;
+
+        const placeholders = validColumns.map(() => '?').join(', ');
+        const values = validColumns.map((col) => row[col]);
         try {
           await this.driver.execute(
-            `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`,
+            `INSERT INTO ${table} (${validColumns.join(', ')}) VALUES (${placeholders})`,
             values
           );
         } catch {

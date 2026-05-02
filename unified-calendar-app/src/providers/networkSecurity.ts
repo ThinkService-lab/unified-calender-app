@@ -38,8 +38,10 @@ export const MAX_TIMEOUT_MS = 10000;
  * Set of allowed provider hostnames. Requests to these domains are
  * permitted to carry full event data. Requests to any other domain
  * will have sensitive event fields stripped.
+ *
+ * Security Review 2026-05-01: Finding H5 — separated static and dynamic domains.
  */
-export const ALLOWED_PROVIDER_DOMAINS: ReadonlySet<string> = new Set([
+const STATIC_PROVIDER_DOMAINS: ReadonlySet<string> = new Set([
   'www.googleapis.com',
   'googleapis.com',
   'graph.microsoft.com',
@@ -52,6 +54,52 @@ export const ALLOWED_PROVIDER_DOMAINS: ReadonlySet<string> = new Set([
   'p05-caldav.icloud.com',
   'p06-caldav.icloud.com',
 ]);
+
+/**
+ * Dynamic CalDAV domains added at runtime when users connect CalDAV accounts.
+ * Separated from static domains for auditability.
+ * Security Review 2026-05-01: Finding H5
+ */
+const dynamicCalDAVDomains: Set<string> = new Set();
+
+/**
+ * Domains that should never be added as CalDAV providers.
+ * Prevents social engineering attacks where a user is tricked into
+ * connecting a non-CalDAV server to exfiltrate event data.
+ * Security Review 2026-05-01: Finding H5
+ */
+const BLOCKED_DOMAIN_PATTERNS: readonly string[] = [
+  'google.com',
+  'googleapis.com',
+  'microsoft.com',
+  'live.com',
+  'outlook.com',
+  'amazon.com',
+  'facebook.com',
+  'meta.com',
+  'twitter.com',
+  'github.com',
+  'localhost',
+];
+
+/**
+ * Backward-compatible export: combined view of static + dynamic domains.
+ * Tests and the index re-export reference this name.
+ */
+export const ALLOWED_PROVIDER_DOMAINS: ReadonlySet<string> = new Proxy(
+  STATIC_PROVIDER_DOMAINS as Set<string>,
+  {
+    get(target, prop, receiver) {
+      if (prop === 'has') {
+        return (value: string) => target.has(value) || dynamicCalDAVDomains.has(value);
+      }
+      if (prop === 'size') {
+        return target.size + dynamicCalDAVDomains.size;
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  },
+) as ReadonlySet<string>;
 
 /**
  * Sensitive event data field names that must not leak to third parties.
@@ -119,15 +167,21 @@ function resolveFullUrl(url: string | undefined, baseURL: string | undefined): s
 
 /**
  * Check if a hostname belongs to an allowed calendar provider.
+ * Checks both static provider domains and dynamic CalDAV domains.
+ * Security Review 2026-05-01: Finding H5
  */
 export function isAllowedProviderDomain(hostname: string): boolean {
   const normalizedHost = hostname.toLowerCase();
-  // Check exact match
-  if (ALLOWED_PROVIDER_DOMAINS.has(normalizedHost)) {
+  // Check static domains (exact match)
+  if (STATIC_PROVIDER_DOMAINS.has(normalizedHost)) {
     return true;
   }
-  // Check if it's a subdomain of an allowed domain
-  for (const allowed of ALLOWED_PROVIDER_DOMAINS) {
+  // Check dynamic CalDAV domains (exact match)
+  if (dynamicCalDAVDomains.has(normalizedHost)) {
+    return true;
+  }
+  // Check if it's a subdomain of a static domain
+  for (const allowed of STATIC_PROVIDER_DOMAINS) {
     if (normalizedHost.endsWith(`.${allowed}`)) {
       return true;
     }
@@ -136,12 +190,64 @@ export function isAllowedProviderDomain(hostname: string): boolean {
 }
 
 /**
- * Add a custom CalDAV domain to the allowed provider domains set.
- * CalDAV servers have configurable base URLs, so we need to allow
- * dynamically adding their domains.
+ * Validate that a hostname is a plausible CalDAV server domain.
+ * Rejects known non-CalDAV domains and bare TLDs.
+ * Security Review 2026-05-01: Finding H5
  */
-export function addAllowedProviderDomain(hostname: string): void {
-  (ALLOWED_PROVIDER_DOMAINS as Set<string>).add(hostname.toLowerCase());
+export function isValidCalDAVDomain(hostname: string): boolean {
+  const normalizedHost = hostname.toLowerCase();
+
+  // Must have at least one dot (no bare TLDs or localhost without port)
+  if (!normalizedHost.includes('.')) {
+    return false;
+  }
+
+  // Reject blocked domain patterns
+  for (const blocked of BLOCKED_DOMAIN_PATTERNS) {
+    if (normalizedHost === blocked || normalizedHost.endsWith(`.${blocked}`)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Add a custom CalDAV domain to the allowed provider domains set.
+ * Validates the domain before adding. Returns true if added, false if rejected.
+ * Security Review 2026-05-01: Finding H5
+ */
+export function addAllowedProviderDomain(hostname: string): boolean {
+  const normalizedHost = hostname.toLowerCase();
+
+  // Already in static set — no need to add
+  if (STATIC_PROVIDER_DOMAINS.has(normalizedHost)) {
+    return true;
+  }
+
+  // Validate before adding
+  if (!isValidCalDAVDomain(normalizedHost)) {
+    return false;
+  }
+
+  dynamicCalDAVDomains.add(normalizedHost);
+  return true;
+}
+
+/**
+ * Remove a dynamic CalDAV domain (e.g., when an account is disconnected).
+ * Security Review 2026-05-01: Finding H5
+ */
+export function removeAllowedProviderDomain(hostname: string): void {
+  dynamicCalDAVDomains.delete(hostname.toLowerCase());
+}
+
+/**
+ * Get the current set of dynamic CalDAV domains (for testing/debugging).
+ * Security Review 2026-05-01: Finding H5
+ */
+export function getDynamicDomains(): ReadonlySet<string> {
+  return dynamicCalDAVDomains;
 }
 
 /**

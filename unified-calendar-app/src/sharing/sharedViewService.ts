@@ -16,6 +16,9 @@ import type {
   CalendarEvent,
   Audience,
 } from '../types';
+// Security Review 2026-05-01: Findings C2 + L2 — shared safe event mapper
+import { mapRowToEvent } from '../utils/eventMapper';
+import { safeJsonParse } from '../utils/safeJsonParse';
 
 /** Maximum members per shared view on Team tier */
 export const MAX_SHARED_VIEW_MEMBERS = 20;
@@ -50,13 +53,8 @@ export interface SharedViewService {
   ): Promise<CalendarEvent[]>;
 }
 
-function generateUUID(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
+// Security Review 2026-05-01: Finding H2 — replaced Math.random() UUID with crypto
+import { cryptoUUID } from '../utils/cryptoId';
 
 export interface SharedViewServiceConfig {
   db: DatabaseDriver;
@@ -85,7 +83,7 @@ export function createSharedViewService(
       };
     }
 
-    const viewId = generateUUID();
+    const viewId = cryptoUUID();
     const now = Date.now();
 
     try {
@@ -195,7 +193,7 @@ export function createSharedViewService(
       id: row.id,
       ownerId: row.owner_id,
       name: row.name,
-      calendarIds: JSON.parse(row.calendar_ids),
+      calendarIds: safeJsonParse<string[]>(row.calendar_ids, []),
       members: memberRows.map((m) => ({
         userId: m.user_id,
         permission: m.permission as 'read-only' | 'read-write',
@@ -230,7 +228,7 @@ export function createSharedViewService(
         id: row.id,
         ownerId: row.owner_id,
         name: row.name,
-        calendarIds: JSON.parse(row.calendar_ids),
+        calendarIds: safeJsonParse<string[]>(row.calendar_ids, []),
         members: memberRows.map((m) => ({
           userId: m.user_id,
           permission: m.permission as 'read-only' | 'read-write',
@@ -286,48 +284,4 @@ export function createSharedViewService(
   };
 }
 
-/** Maps a raw database row to a CalendarEvent object. */
-function mapRowToEvent(row: Record<string, unknown>): CalendarEvent {
-  return {
-    id: row.id as string,
-    providerEventId: (row.provider_event_id as string) ?? '',
-    calendarAccountId: row.calendar_account_id as string,
-    title: row.title as string,
-    description: (row.description as string) ?? null,
-    location: (row.location as string) ?? null,
-    startTime: new Date(row.start_time as number),
-    endTime: new Date(row.end_time as number),
-    timeZone: (row.time_zone as string) ?? 'UTC',
-    isAllDay: (row.is_all_day as number) === 1,
-    recurrenceRule: row.recurrence_rule
-      ? JSON.parse(row.recurrence_rule as string)
-      : null,
-    recurrenceExceptionDate: row.recurrence_exception_date
-      ? new Date(row.recurrence_exception_date as number)
-      : null,
-    parentRecurringEventId:
-      (row.parent_recurring_event_id as string) ?? null,
-    organizer: row.organizer
-      ? JSON.parse(row.organizer as string)
-      : null,
-    attendees: row.attendees
-      ? JSON.parse(row.attendees as string)
-      : [],
-    sequence: (row.sequence as number) ?? 0,
-    dtstamp: new Date(row.dtstamp as number),
-    status:
-      (row.status as CalendarEvent['status']) ?? 'confirmed',
-    visibility:
-      (row.visibility_override as CalendarEvent['visibility']) ?? null,
-    opaqueFields: row.opaque_fields
-      ? new Map(Object.entries(JSON.parse(row.opaque_fields as string)))
-      : new Map(),
-    syncStatus:
-      (row.sync_status as CalendarEvent['syncStatus']) ?? 'synced',
-    localVersion: (row.local_version as number) ?? 1,
-    remoteEtag: (row.remote_etag as string) ?? null,
-    modifiedBy: (row.modified_by as string) ?? null,
-    createdAt: new Date(row.created_at as number),
-    updatedAt: new Date(row.updated_at as number),
-  };
-}
+// mapRowToEvent is imported from '../utils/eventMapper'
