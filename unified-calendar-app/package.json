@@ -12,7 +12,10 @@
     "test:pbt": "jest --testPathPattern=\\.property\\.",
     "test:e2e": "npx playwright test",
     "test:e2e:ui": "npx playwright test --ui",
-    "test:e2e:headed": "npx playwright test --headed"
+    "test:e2e:headed": "npx playwright test --headed",
+    "audit:runtime": "npm audit --audit-level=high --omit=dev",
+    "audit:full": "npm audit --audit-level=high",
+    "audit:report": "npm audit --json --audit-level=moderate --omit=dev"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

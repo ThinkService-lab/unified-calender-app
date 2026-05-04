@@ -1,0 +1,102 @@
+# Supply-chain dependency audit gate.
+#
+# Implements the "weekly npm audit cadence + CI enforcement" residual
+# recommendation from the 2026-05-02 security review (Finding M7).
+#
+# Two complementary enforcement modes:
+#
+#   1. Blocking gate — runs on every push to main and every PR. Fails
+#      CI on the first high / critical advisory. Today the project has
+#      zero high / critical advisories; this workflow turns that into a
+#      durable contract by failing fast the moment the situation changes.
+#
+#   2. Weekly informational report — runs on a cron schedule, captures
+#      the full `npm audit --json` output at moderate level as a build
+#      artifact so each week's delta can be diffed against the baseline
+#      captured in docs/npm-audit-2026-05-02.json.
+#
+# The runtime gate uses `--omit=dev` to match M7's original wording
+# (production bundle only). A second, stricter step audits the full
+# dependency tree at high level so high-severity dev-tooling advisories
+# also block — those are rarer but they do happen, and catching them
+# at PR time is cheaper than during a release.
+#
+# Reference: unified-calendar-app/docs/security-review-2026-05-02.md,
+# Finding M7.
+
+name: npm audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'unified-calendar-app/package.json'
+      - 'unified-calendar-app/package-lock.json'
+      - '.github/workflows/npm-audit.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'unified-calendar-app/package.json'
+      - 'unified-calendar-app/package-lock.json'
+      - '.github/workflows/npm-audit.yml'
+  schedule:
+    # Mondays at 13:00 UTC (roughly start-of-week in every major timezone).
+    - cron: '0 13 * * 1'
+  # Allow manual triggering from the Actions UI for ad-hoc audits.
+  workflow_dispatch:
+
+# Prevent overlapping runs on the same ref from racing each other.
+concurrency:
+  group: npm-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+# Minimal default permissions — this workflow only reads code.
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: unified-calendar-app
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # Cache ~/.npm using package-lock.json as the cache key.
+          cache: 'npm'
+          cache-dependency-path: unified-calendar-app/package-lock.json
+
+      # Blocking gate #1: runtime bundle, high severity.
+      # This is the tightest loop we want every PR to pass. M7's
+      # original recommendation used the now-deprecated --production
+      # flag; --omit=dev is the modern equivalent.
+      - name: Audit runtime deps (high severity, blocking)
+        run: npm run audit:runtime
+
+      # Blocking gate #2: full dep tree, high severity. Dev-tooling
+      # advisories at high/critical should not ship to mainline either.
+      - name: Audit full dep tree (high severity, blocking)
+        run: npm run audit:full
+
+      # Informational report on scheduled runs. We always capture the
+      # JSON so the artifact is available even when the report exits
+      # nonzero (moderate-or-worse is currently the norm, so this step
+      # is deliberately non-blocking).
+      - name: Capture full audit report (informational)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: npm run audit:report > audit-report.json || true
+
+      - name: Upload audit report artifact
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-report-${{ github.run_id }}
+          path: unified-calendar-app/audit-report.json
+          retention-days: 90
