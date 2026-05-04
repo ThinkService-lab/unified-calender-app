@@ -21,3 +21,16 @@ export type { AccountLimitEnforcer, AccountLimitEnforcerDeps, AccountLimitResult
 // Feature unlock poller (ensures 10-second unlock SLA after payment)
 export { pollForFeatureUnlock, MAX_POLL_DURATION_MS, POLL_INTERVAL_MS } from './featureUnlockPoller';
 export type { FeatureUnlockPollerDeps, FeatureUnlockResult, SubscriptionResponse } from './featureUnlockPoller';
+// Subscription HTTP client (production wiring for the bootstrap's
+// `subscriptionHttpClient` option; Security Review 2026-05-02 L4 follow-up)
+export {
+  createSubscriptionHttpClient,
+  SUBSCRIPTION_DEFAULT_TIMEOUT_MS,
+  SUBSCRIPTION_MIN_TIMEOUT_MS,
+  SUBSCRIPTION_MAX_TIMEOUT_MS,
+} from './subscriptionHttpClient';
+export type {
+  SubscriptionHttpClient,
+  SubscriptionHttpClientOptions,
+  SessionTokenGetter,
+} from './subscriptionHttpClient';

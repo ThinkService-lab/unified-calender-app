@@ -676,3 +676,98 @@ describe('Application Bootstrap — token expiry provider wiring (L6)', () => {
     expect(b).toBe('unknown');
   });
 });
+
+// ── subscriptionHttpClient wiring (Security Review 2026-05-02 L4 follow-up) ──
+//
+// The bootstrap's placeholder exists so unit tests can boot the app
+// without wiring a real HTTP client, but it must fail loudly on BOTH
+// `get` and `post` so a production build that forgets to wire the
+// client cannot silently no-op subscription lifecycle calls.
+describe('Application Bootstrap — subscription HTTP client wiring (L4)', () => {
+  let appContext: AppContext | null = null;
+
+  afterEach(() => {
+    if (appContext) {
+      appContext.teardown();
+      appContext = null;
+    }
+    resetStoreInitialization();
+    jest.restoreAllMocks();
+  });
+
+  it('exposes the configured http client on the AppContext', async () => {
+    const http = { get: jest.fn(), post: jest.fn() };
+    const config = createTestConfig({ subscriptionHttpClient: http });
+    appContext = await bootstrapApp(config);
+
+    expect(appContext.subscriptionHttpClient).toBe(http);
+  });
+
+  it('exposes a placeholder http client when none is supplied', async () => {
+    const config = createTestConfig();
+    appContext = await bootstrapApp(config);
+
+    expect(appContext.subscriptionHttpClient).toBeDefined();
+    expect(typeof appContext.subscriptionHttpClient.get).toBe('function');
+    expect(typeof appContext.subscriptionHttpClient.post).toBe('function');
+  });
+
+  it('placeholder rejects POST with a descriptive error', async () => {
+    const config = createTestConfig();
+    appContext = await bootstrapApp(config);
+
+    await expect(
+      appContext.subscriptionHttpClient.post('/subscriptions/validate', { foo: 'bar' }),
+    ).rejects.toThrow(/subscriptionHttpClient is not configured.*POST \/subscriptions\/validate/);
+  });
+
+  it('placeholder rejects GET with a descriptive error', async () => {
+    // Without this coverage, a production build that forgets to wire
+    // the client could still boot and call `pollForFeatureUnlock` /
+    // `restorePurchases` against a silent no-op client.
+    const config = createTestConfig();
+    appContext = await bootstrapApp(config);
+
+    await expect(
+      appContext.subscriptionHttpClient.get('/subscriptions/u1'),
+    ).rejects.toThrow(/subscriptionHttpClient is not configured.*GET \/subscriptions\/u1/);
+  });
+
+  it('placeholder error message points callers at the production factory', async () => {
+    // Grepping for `createSubscriptionHttpClient` in the error message
+    // makes the remediation path impossible to miss during triage.
+    const config = createTestConfig();
+    appContext = await bootstrapApp(config);
+
+    await expect(
+      appContext.subscriptionHttpClient.get('/anything'),
+    ).rejects.toThrow(/createSubscriptionHttpClient/);
+  });
+
+  it('supplied client flows through to the subscription manager', async () => {
+    // Proof that the wiring actually reaches the subscription manager:
+    // `validateReceipt` calls `http.post('/subscriptions/validate', …)`.
+    const http = {
+      get: jest.fn().mockResolvedValue({ data: {} }),
+      post: jest.fn().mockResolvedValue({
+        data: {
+          tier: 'pro',
+          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          gracePeriodEndsAt: null,
+        },
+      }),
+    };
+    const config = createTestConfig({ subscriptionHttpClient: http });
+    appContext = await bootstrapApp(config);
+
+    await appContext.subscriptionManager.validateReceipt({
+      platform: 'stripe',
+      receiptId: 'rcpt_1',
+    });
+
+    expect(http.post).toHaveBeenCalledWith(
+      '/subscriptions/validate',
+      expect.objectContaining({ platform: 'stripe', receiptId: 'rcpt_1' }),
+    );
+  });
+});

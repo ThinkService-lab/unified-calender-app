@@ -35,6 +35,7 @@ import type { PlatformNotificationHandler } from '../notifications/types';
 import type { QueryClient } from '@tanstack/react-query';
 import type { TokenExpiryProvider } from '../providers/cachedTokenHealth';
 import type { OAuthConnector } from '../providers/oauthConnector';
+import type { SubscriptionHttpClient } from '../subscription/subscriptionHttpClient';
 
 // ── Configuration ──────────────────────────────────────────────────────
 
@@ -81,10 +82,14 @@ export interface AppBootstrapConfig {
    * no-ops from shipping to production (Security Review 2026-05-02
    * Finding L4 carry-over). Tests that don't exercise the subscription
    * API path can safely leave it unset.
+   *
+   * Production callers should use `createSubscriptionHttpClient` from
+   * `src/subscription/subscriptionHttpClient` — it returns a client
+   * that also satisfies the `get`-based consumers
+   * (`pollForFeatureUnlock`, `createStripePaymentService`), so the same
+   * instance can be reused across all subscription modules.
    */
-  subscriptionHttpClient?: {
-    post<T>(url: string, body: unknown): Promise<{ data: T }>;
-  };
+  subscriptionHttpClient?: SubscriptionHttpClient;
 }
 
 // ── Wired Application Context ──────────────────────────────────────────
@@ -102,6 +107,15 @@ export interface AppContext {
   privacyLayer: PrivacyLayer;
   /** Subscription manager for tier enforcement and feature gating */
   subscriptionManager: SubscriptionManager;
+  /**
+   * The configured subscription HTTP client (or the fail-loud
+   * placeholder when none was supplied). Exposed on the context so
+   * other subscription consumers — Stripe payment service on web,
+   * `pollForFeatureUnlock`, direct `/subscriptions/:userId` reads —
+   * can reuse the same client instead of building their own.
+   * Security Review 2026-05-02 (pass 3) L4 follow-up.
+   */
+  subscriptionHttpClient: SubscriptionHttpClient;
   /** AI scheduling assistant (gated by subscription tier) */
   aiAssistant: AISchedulingAssistant;
   /** Onboarding manager controlling initial app flow */
@@ -250,15 +264,23 @@ export async function bootstrapApp(config: AppBootstrapConfig): Promise<AppConte
   // client now rejects instead of silently returning empty data, so any
   // production build that ships without wiring `subscriptionHttpClient`
   // fails loudly on first use rather than silently no-oping subscription
-  // lifecycle calls.
-  const subscriptionHttp =
+  // lifecycle calls. Both verbs reject, so `pollForFeatureUnlock` and the
+  // Stripe `paymentService` (which use `get`) also fail loudly when the
+  // placeholder leaks past a test seam.
+  const placeholderError = (method: string, url: string): Error =>
+    new Error(
+      `[appBootstrap] subscriptionHttpClient is not configured — refusing to ${method} ${url}. ` +
+        'Wire an HTTP client before production use (see createSubscriptionHttpClient in ' +
+        'src/subscription/subscriptionHttpClient.ts). This placeholder exists only so unit ' +
+        'tests that do not exercise the subscription API path can boot the app.',
+    );
+  const subscriptionHttp: SubscriptionHttpClient =
     config.subscriptionHttpClient ?? {
-      post: async (url: string): Promise<{ data: never }> => {
-        throw new Error(
-          `[appBootstrap] subscriptionHttpClient is not configured — refusing to call ${url}. ` +
-            'Wire an HTTP client before production use. This placeholder exists only so unit tests ' +
-            'that do not exercise the subscription API path can boot the app.',
-        );
+      get: async <T>(url: string): Promise<{ data: T }> => {
+        throw placeholderError('GET', url);
+      },
+      post: async <T>(url: string): Promise<{ data: T }> => {
+        throw placeholderError('POST', url);
       },
     };
   const subscriptionManager = createSubscriptionManager({
@@ -436,6 +458,7 @@ export async function bootstrapApp(config: AppBootstrapConfig): Promise<AppConte
     conflictDetector,
     privacyLayer,
     subscriptionManager,
+    subscriptionHttpClient: subscriptionHttp,
     aiAssistant,
     onboardingManager,
     tokenHealthMonitor,

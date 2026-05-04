@@ -174,7 +174,7 @@ Both advisories cascade into the same transitive closure — `expo` and its sub-
 | M3       | Open                  | Rate limiting on sharing/delegation requires a backend architectural decision. Not resolvable from the client. |
 | M4       | **Closed by H8.**     | `syncEngine.applyInboundChanges` now observes `supportsTransactions: true` and wraps inbound writes atomically. |
 | L3       | Open                  | Read-only driver still allows PRAGMAs through `execute()`. Only reachable after migration failure. Defense-in-depth only. |
-| L4       | **Hardened in this change.** The placeholder HTTP client used by `createSubscriptionManager` when `AppBootstrapConfig.subscriptionHttpClient` is omitted now **throws** a descriptive error on first call instead of silently returning `{}`. A production build that ships without wiring a real HTTP client will fail loudly on first subscription API call rather than silently no-opping lifecycle events. |
+| L4       | **Closed 2026-05-03.** The production wiring path is now explicit: `createSubscriptionHttpClient({ baseUrl, getSessionToken, ... })` in `src/subscription/subscriptionHttpClient.ts` returns a client that satisfies every subscription consumer (manager post, payment service get+post, feature unlock poller get). The bootstrap's placeholder now throws on **both** `get` and `post`, so a build that forgets to wire it cannot silently no-op a read-side call (e.g. `pollForFeatureUnlock`, `restorePurchases`) either. The configured client is also exposed on `AppContext.subscriptionHttpClient` so downstream consumers reuse the same instance. |
 
 ---
 
@@ -215,6 +215,6 @@ Both advisories cascade into the same transitive closure — `expo` and its sub-
 3. **L3 / read-only driver hardening.** Low risk; only reachable post-migration-failure. Track in cleanup backlog.
 4. **M7 / weekly `npm audit` cadence + CI enforcement.** Operational; add to CI pipeline.
 5. ~~**Wire `tokenExpiryProvider` in the production bootstrap entry point.**~~ **Closed 2026-05-03.** `OAuthConnector` now persists an absolute `storedAt` stamp and exposes `getTokenExpiryInfo(accountId)` / `markTokenRejected(accountId)`. `createOAuthTokenExpiryProvider(connector)` adapts it to `TokenExpiryProvider`. `bootstrapApp` accepts an `oauthConnector` config option and auto-builds the default provider — the production entry point only needs to pass one extra argument, and passing `tokenExpiryProvider` explicitly still overrides.
-6. **Wire `subscriptionHttpClient` in the production bootstrap entry point.** Required before launch; the placeholder will now throw on first call instead of silently no-opping (L4 hardening).
+6. ~~**Wire `subscriptionHttpClient` in the production bootstrap entry point.**~~ **Closed 2026-05-03.** `createSubscriptionHttpClient` in `src/subscription/subscriptionHttpClient.ts` is the canonical factory (HTTPS-only, timeout-clamped, per-request Bearer auth, structurally compatible with every subscription consumer). The bootstrap's fail-loud placeholder now covers both `get` and `post`, and the configured client is exposed on `AppContext.subscriptionHttpClient` for reuse by the Stripe payment service and `pollForFeatureUnlock`.
 
 No exploitable vulnerability is known in the codebase at the time of this review.
