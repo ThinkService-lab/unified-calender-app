@@ -596,3 +596,83 @@ describe('Application Bootstrap', () => {
     });
   });
 });
+
+// ── tokenExpiryProvider / oauthConnector wiring ─────────────────────────
+//
+// Security Review 2026-05-02 (pass 3): Finding L6 follow-up — the bootstrap
+// must accept an `oauthConnector` and build the default `tokenExpiryProvider`
+// from it, so production entry points can wire L6 with a single argument.
+describe('Application Bootstrap — token expiry provider wiring (L6)', () => {
+  let appContext: AppContext | null = null;
+
+  afterEach(() => {
+    if (appContext) {
+      appContext.teardown();
+      appContext = null;
+    }
+    resetStoreInitialization();
+    jest.restoreAllMocks();
+  });
+
+  it('accepts an explicit tokenExpiryProvider without an OAuthConnector', async () => {
+    const provider = jest.fn().mockResolvedValue({ expiresAt: null });
+    const config = createTestConfig({ tokenExpiryProvider: provider });
+    appContext = await bootstrapApp(config);
+
+    // Exercising the wiring: a token-health check for an unregistered
+    // account returns 'unknown' from the raw probe, but the provider
+    // must have been consulted first (even if it returned null).
+    await appContext.tokenHealthMonitor.checkTokenHealth('some-account');
+    expect(provider).toHaveBeenCalledWith('some-account');
+  });
+
+  it('builds a default provider from the supplied OAuthConnector', async () => {
+    // Stub OAuthConnector — only getTokenExpiryInfo is used by the wiring.
+    const getTokenExpiryInfo = jest
+      .fn()
+      .mockResolvedValue({ expiresAt: Date.now() + 60 * 60 * 1000, recentlyRejected: false });
+    const fakeOAuthConnector = { getTokenExpiryInfo } as unknown as import('../../providers/oauthConnector').OAuthConnector;
+
+    const config = createTestConfig({ oauthConnector: fakeOAuthConnector });
+    appContext = await bootstrapApp(config);
+
+    // When the health monitor probes the account, the cached checker
+    // must short-circuit on the local expiry — proof the default wiring
+    // ran. The raw probe (adapter.listCalendars) never runs because
+    // no adapter is registered, but the local short-circuit means we
+    // get 'valid' without ever reaching the probe.
+    const status = await appContext.tokenHealthMonitor.checkTokenHealth('acc-A');
+    expect(status).toBe('valid');
+    expect(getTokenExpiryInfo).toHaveBeenCalledWith('acc-A');
+  });
+
+  it('prefers an explicit tokenExpiryProvider over the OAuthConnector default', async () => {
+    const explicitProvider = jest.fn().mockResolvedValue({ expiresAt: null });
+    const getTokenExpiryInfo = jest.fn();
+    const fakeOAuthConnector = { getTokenExpiryInfo } as unknown as import('../../providers/oauthConnector').OAuthConnector;
+
+    const config = createTestConfig({
+      tokenExpiryProvider: explicitProvider,
+      oauthConnector: fakeOAuthConnector,
+    });
+    appContext = await bootstrapApp(config);
+
+    await appContext.tokenHealthMonitor.checkTokenHealth('acc-A');
+    expect(explicitProvider).toHaveBeenCalled();
+    expect(getTokenExpiryInfo).not.toHaveBeenCalled();
+  });
+
+  it('omitting both falls through to the 5-minute probe cache', async () => {
+    const config = createTestConfig();
+    appContext = await bootstrapApp(config);
+
+    // No adapter, no provider → raw probe returns 'unknown' (from the
+    // `if (!adapter) return 'unknown'` branch in appBootstrap) and the
+    // result is cached. Two consecutive checks produce identical
+    // results without throwing.
+    const a = await appContext.tokenHealthMonitor.checkTokenHealth('unregistered');
+    const b = await appContext.tokenHealthMonitor.checkTokenHealth('unregistered');
+    expect(a).toBe('unknown');
+    expect(b).toBe('unknown');
+  });
+});

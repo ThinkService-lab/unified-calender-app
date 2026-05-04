@@ -214,7 +214,7 @@ Both advisories cascade into the same transitive closure — `expo` and its sub-
 2. **M3 / rate limiting on sharing/delegation.** Needs backend architectural decision. Client side is ready to consume any rate-limit response the backend produces (H4 already handles 429 with Retry-After).
 3. **L3 / read-only driver hardening.** Low risk; only reachable post-migration-failure. Track in cleanup backlog.
 4. **M7 / weekly `npm audit` cadence + CI enforcement.** Operational; add to CI pipeline.
-5. **Wire `tokenExpiryProvider` in the production bootstrap entry point.** The bootstrap now accepts it optionally; the actual app startup code needs to pass a function that reads from the `OAuthConnector`. Without this, L6 falls back to its 5-minute cache (acceptable but not optimal).
+5. ~~**Wire `tokenExpiryProvider` in the production bootstrap entry point.**~~ **Closed 2026-05-03.** `OAuthConnector` now persists an absolute `storedAt` stamp and exposes `getTokenExpiryInfo(accountId)` / `markTokenRejected(accountId)`. `createOAuthTokenExpiryProvider(connector)` adapts it to `TokenExpiryProvider`. `bootstrapApp` accepts an `oauthConnector` config option and auto-builds the default provider — the production entry point only needs to pass one extra argument, and passing `tokenExpiryProvider` explicitly still overrides.
 6. **Wire `subscriptionHttpClient` in the production bootstrap entry point.** Required before launch; the placeholder will now throw on first call instead of silently no-opping (L4 hardening).
 
 No exploitable vulnerability is known in the codebase at the time of this review.

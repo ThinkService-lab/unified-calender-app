@@ -24,6 +24,17 @@ export {
   generateCodeChallenge,
   base64UrlEncode,
 } from './oauthConnector';
+export type { StoredTokenExpiryInfo } from './oauthConnector';
+
+// Cached token health (L6 — cached, expiry-aware token probe)
+export {
+  createCachedTokenHealthChecker,
+  createOAuthTokenExpiryProvider,
+  type TokenExpiryInfo,
+  type TokenExpiryProvider,
+  type TokenExpirySource,
+  type CachedTokenHealthOptions,
+} from './cachedTokenHealth';
 
 // Base adapter
 export { BaseCalendarAdapter, type BaseAdapterConfig } from './baseAdapter';

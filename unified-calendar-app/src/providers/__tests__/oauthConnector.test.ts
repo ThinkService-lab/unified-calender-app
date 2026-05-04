@@ -245,3 +245,113 @@ describe('OAuthConnector', () => {
     });
   });
 });
+
+describe('OAuthConnector — getTokenExpiryInfo (Security Review 2026-05-02 L6 follow-up)', () => {
+  let storage: SecureStorage;
+  let connector: OAuthConnector;
+
+  beforeEach(() => {
+    storage = createMockStorage();
+    connector = new OAuthConnector(storage);
+  });
+
+  it('returns null when no tokens are stored', async () => {
+    const info = await connector.getTokenExpiryInfo('nonexistent');
+    expect(info).toBeNull();
+  });
+
+  it('computes absolute expiresAt from storedAt + expiresIn', async () => {
+    // Freeze time so the assertion is exact.
+    const fakeNow = 1_700_000_000_000;
+    const dateSpy = jest.spyOn(Date, 'now').mockReturnValue(fakeNow);
+    const tokens: AuthResult = {
+      accessToken: 'access_123',
+      refreshToken: 'refresh_456',
+      expiresIn: 3600,
+      tokenType: 'Bearer',
+    };
+    await connector.storeTokens('account1', tokens);
+    dateSpy.mockRestore();
+
+    const info = await connector.getTokenExpiryInfo('account1');
+    expect(info).toEqual({
+      expiresAt: fakeNow + 3600 * 1000,
+      recentlyRejected: false,
+    });
+  });
+
+  it('returns expiresAt=null when expiresIn is missing or non-positive', async () => {
+    const tokens: AuthResult = {
+      accessToken: 'access',
+      refreshToken: 'refresh',
+      expiresIn: 0,
+      tokenType: 'Bearer',
+    };
+    await connector.storeTokens('account1', tokens);
+    const info = await connector.getTokenExpiryInfo('account1');
+    expect(info?.expiresAt).toBeNull();
+    expect(info?.recentlyRejected).toBe(false);
+  });
+
+  it('reports recentlyRejected=true after markTokenRejected', async () => {
+    const tokens: AuthResult = {
+      accessToken: 'access',
+      refreshToken: 'refresh',
+      expiresIn: 3600,
+      tokenType: 'Bearer',
+    };
+    await connector.storeTokens('account1', tokens);
+
+    let info = await connector.getTokenExpiryInfo('account1');
+    expect(info?.recentlyRejected).toBe(false);
+
+    await connector.markTokenRejected('account1');
+
+    info = await connector.getTokenExpiryInfo('account1');
+    expect(info?.recentlyRejected).toBe(true);
+  });
+
+  it('markTokenRejected is a no-op when no tokens are stored', async () => {
+    await expect(connector.markTokenRejected('nonexistent')).resolves.toBeUndefined();
+  });
+
+  it('getStoredTokens stays backward-compatible — storedAt / recentlyRejected are stripped', async () => {
+    const tokens: AuthResult = {
+      accessToken: 'access_123',
+      refreshToken: 'refresh_456',
+      expiresIn: 3600,
+      tokenType: 'Bearer',
+    };
+    await connector.storeTokens('account1', tokens);
+    await connector.markTokenRejected('account1');
+
+    const retrieved = await connector.getStoredTokens('account1');
+    expect(retrieved).toEqual(tokens);
+    // No leakage of internal fields into the public shape.
+    expect(retrieved).not.toHaveProperty('storedAt');
+    expect(retrieved).not.toHaveProperty('recentlyRejected');
+  });
+
+  it('gracefully handles legacy records that lack storedAt', async () => {
+    // Simulate a record written by pre-L6 code.
+    await storage.setItem(
+      'oauth_tokens_legacy',
+      JSON.stringify({
+        accessToken: 'legacy',
+        refreshToken: 'legacy_refresh',
+        expiresIn: 3600,
+        tokenType: 'Bearer',
+      }),
+    );
+
+    const info = await connector.getTokenExpiryInfo('legacy');
+    // storedAt missing → expiresAt unknown → the cached checker will
+    // fall through to the 5-minute probe cache, which is still a
+    // massive reduction in provider calls.
+    expect(info).toEqual({ expiresAt: null, recentlyRejected: false });
+
+    // The legacy record is still readable via getStoredTokens.
+    const retrieved = await connector.getStoredTokens('legacy');
+    expect(retrieved?.accessToken).toBe('legacy');
+  });
+});

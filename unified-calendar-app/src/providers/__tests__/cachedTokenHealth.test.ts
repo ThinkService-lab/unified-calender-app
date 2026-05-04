@@ -252,3 +252,75 @@ describe('createCachedTokenHealthChecker', () => {
     });
   });
 });
+
+describe('createOAuthTokenExpiryProvider (production wiring adapter)', () => {
+  // The adapter is a thin pass-through that converts an
+  // `OAuthConnector`-shaped dependency into a `TokenExpiryProvider`
+  // that the cached checker understands. These tests pin the contract
+  // so the `bootstrapApp` default wiring stays correct.
+
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { createOAuthTokenExpiryProvider } = require('../cachedTokenHealth');
+
+  it('returns null when the source returns null', async () => {
+    const source = { getTokenExpiryInfo: jest.fn().mockResolvedValue(null) };
+    const provider = createOAuthTokenExpiryProvider(source);
+    expect(await provider('acc-1')).toBeNull();
+    expect(source.getTokenExpiryInfo).toHaveBeenCalledWith('acc-1');
+  });
+
+  it('forwards expiresAt and recentlyRejected from the source', async () => {
+    const source = {
+      getTokenExpiryInfo: jest.fn().mockResolvedValue({
+        expiresAt: 1_700_000_999_000,
+        recentlyRejected: true,
+      }),
+    };
+    const provider = createOAuthTokenExpiryProvider(source);
+    expect(await provider('acc-1')).toEqual({
+      expiresAt: 1_700_000_999_000,
+      recentlyRejected: true,
+    });
+  });
+
+  it('short-circuits the cached checker when wired end-to-end', async () => {
+    // Integration-style: adapter feeds the cached checker directly.
+    // With a fresh expiry, the raw probe must not fire.
+    let now = 1_700_000_000_000;
+    const raw: TokenHealthChecker = jest.fn().mockResolvedValue('valid');
+    const source = {
+      getTokenExpiryInfo: jest.fn().mockResolvedValue({
+        expiresAt: now + 60 * 60 * 1000,
+        recentlyRejected: false,
+      }),
+    };
+    const checker = createCachedTokenHealthChecker({
+      rawChecker: raw,
+      tokenExpiryProvider: createOAuthTokenExpiryProvider(source),
+      now: () => now,
+    });
+
+    expect(await checker('acc-1')).toBe('valid');
+    expect(raw).not.toHaveBeenCalled();
+    expect(source.getTokenExpiryInfo).toHaveBeenCalledWith('acc-1');
+  });
+
+  it('forces a raw probe when source reports recentlyRejected=true', async () => {
+    const now = 1_700_000_000_000;
+    const raw: TokenHealthChecker = jest.fn().mockResolvedValue('revoked');
+    const source = {
+      getTokenExpiryInfo: jest.fn().mockResolvedValue({
+        expiresAt: now + 60 * 60 * 1000,
+        recentlyRejected: true,
+      }),
+    };
+    const checker = createCachedTokenHealthChecker({
+      rawChecker: raw,
+      tokenExpiryProvider: createOAuthTokenExpiryProvider(source),
+      now: () => now,
+    });
+
+    expect(await checker('acc-1')).toBe('revoked');
+    expect(raw).toHaveBeenCalledTimes(1);
+  });
+});

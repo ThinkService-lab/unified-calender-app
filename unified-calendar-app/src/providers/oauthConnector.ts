@@ -69,6 +69,35 @@ function tokenKey(accountId: string): string {
 }
 
 /**
+ * Persisted shape written to secure storage. Adds an absolute `storedAt`
+ * timestamp and a flag for whether the token was recently rejected by
+ * the provider, which together let `getTokenExpiryInfo` return an
+ * accurate expiry without hitting the network.
+ *
+ * Security Review 2026-05-02 (pass 3): Finding L6 follow-up — production
+ * wiring for `tokenExpiryProvider` requires an absolute deadline, which
+ * `AuthResult.expiresIn` (relative seconds) does not provide.
+ */
+interface PersistedTokens extends AuthResult {
+  /** Epoch ms at which `storeTokens` wrote this record. */
+  storedAt: number;
+  /**
+   * Set to true by the refresh path (or by a caller that observed a 401
+   * on this account) so the next health-monitor tick forces a fresh
+   * network probe instead of trusting the local expiry.
+   */
+  recentlyRejected?: boolean;
+}
+
+/** Parsed info used by the cached token-health checker (L6). */
+export interface StoredTokenExpiryInfo {
+  /** Absolute epoch ms at which the access token expires. */
+  expiresAt: number | null;
+  /** Whether the last real network call for this account returned 401. */
+  recentlyRejected: boolean;
+}
+
+/**
  * OAuthConnector handles the OAuth 2.0 authorization code flow with PKCE,
  * token storage, refresh, and revocation.
  */
@@ -191,20 +220,84 @@ export class OAuthConnector {
   }
 
   /**
-   * Store tokens securely for an account.
+   * Store tokens securely for an account. Stamps the current time so
+   * the absolute expiry deadline can be computed later without hitting
+   * the provider (used by the token-health monitor's local-expiry
+   * short-circuit, Security Review 2026-05-02 Finding L6).
    */
   async storeTokens(accountId: string, result: AuthResult): Promise<void> {
-    await this.storage.setItem(tokenKey(accountId), JSON.stringify(result));
+    const persisted: PersistedTokens = {
+      ...result,
+      storedAt: Date.now(),
+      recentlyRejected: false,
+    };
+    await this.storage.setItem(tokenKey(accountId), JSON.stringify(persisted));
   }
 
   /**
    * Retrieve stored tokens for an account.
+   *
+   * Returns the `AuthResult` shape callers have always received. The
+   * extra `storedAt` / `recentlyRejected` fields used by
+   * `getTokenExpiryInfo` are stripped here so the return type stays
+   * backward-compatible.
    */
   async getStoredTokens(accountId: string): Promise<AuthResult | null> {
+    const persisted = await this.getPersistedTokens(accountId);
+    if (!persisted) return null;
+    // Project back to the public AuthResult shape.
+    const { storedAt: _storedAt, recentlyRejected: _rr, ...authResult } =
+      persisted;
+    return authResult;
+  }
+
+  /**
+   * Retrieve expiry metadata for an account without hitting the
+   * provider. Returns `null` when no token is stored or the record
+   * cannot be parsed.
+   *
+   * Used to build the `tokenExpiryProvider` wired into the bootstrap's
+   * cached token-health checker (Security Review 2026-05-02 Finding L6
+   * follow-up).
+   */
+  async getTokenExpiryInfo(
+    accountId: string,
+  ): Promise<StoredTokenExpiryInfo | null> {
+    const persisted = await this.getPersistedTokens(accountId);
+    if (!persisted) return null;
+    const storedAt = typeof persisted.storedAt === 'number' ? persisted.storedAt : null;
+    const expiresIn =
+      typeof persisted.expiresIn === 'number' && persisted.expiresIn > 0
+        ? persisted.expiresIn
+        : null;
+    const expiresAt =
+      storedAt !== null && expiresIn !== null ? storedAt + expiresIn * 1000 : null;
+    return {
+      expiresAt,
+      recentlyRejected: persisted.recentlyRejected === true,
+    };
+  }
+
+  /**
+   * Mark a stored token as recently rejected (e.g. after a 401 from the
+   * provider) so the next health-monitor tick forces a fresh probe
+   * even if the local expiry still looks valid.
+   */
+  async markTokenRejected(accountId: string): Promise<void> {
+    const persisted = await this.getPersistedTokens(accountId);
+    if (!persisted) return;
+    persisted.recentlyRejected = true;
+    await this.storage.setItem(tokenKey(accountId), JSON.stringify(persisted));
+  }
+
+  /**
+   * Internal helper — reads and parses the full persisted record.
+   */
+  private async getPersistedTokens(accountId: string): Promise<PersistedTokens | null> {
     const stored = await this.storage.getItem(tokenKey(accountId));
     if (!stored) return null;
     try {
-      return JSON.parse(stored) as AuthResult;
+      return JSON.parse(stored) as PersistedTokens;
     } catch {
       return null;
     }

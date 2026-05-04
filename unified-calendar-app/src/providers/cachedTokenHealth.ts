@@ -151,3 +151,34 @@ export function createCachedTokenHealthChecker(
 
   return checker;
 }
+
+/**
+ * Build a `TokenExpiryProvider` from anything that exposes a
+ * `getTokenExpiryInfo(accountId)` method — i.e. an `OAuthConnector`.
+ *
+ * This is the default production wiring the bootstrap uses when a
+ * caller passes an `oauthConnector`. Extracting it as a named factory
+ * keeps the type contract explicit and makes it trivial to unit-test
+ * the adapter layer in isolation.
+ *
+ * Security Review 2026-05-02 (pass 3): Finding L6 — residual work item
+ * "wire `tokenExpiryProvider` in the production bootstrap entry point."
+ */
+export interface TokenExpirySource {
+  getTokenExpiryInfo(
+    accountId: string,
+  ): Promise<{ expiresAt: number | null; recentlyRejected: boolean } | null>;
+}
+
+export function createOAuthTokenExpiryProvider(
+  source: TokenExpirySource,
+): TokenExpiryProvider {
+  return async (accountId: string): Promise<TokenExpiryInfo | null> => {
+    const info = await source.getTokenExpiryInfo(accountId);
+    if (!info) return null;
+    return {
+      expiresAt: info.expiresAt,
+      recentlyRejected: info.recentlyRejected,
+    };
+  };
+}

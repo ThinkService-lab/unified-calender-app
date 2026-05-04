@@ -34,6 +34,7 @@ import type { Feature } from '../types/subscription';
 import type { PlatformNotificationHandler } from '../notifications/types';
 import type { QueryClient } from '@tanstack/react-query';
 import type { TokenExpiryProvider } from '../providers/cachedTokenHealth';
+import type { OAuthConnector } from '../providers/oauthConnector';
 
 // ── Configuration ──────────────────────────────────────────────────────
 
@@ -58,8 +59,22 @@ export interface AppBootstrapConfig {
    * 2026-05-02 Finding L6). When the caller has access to the
    * OAuthConnector / SecureStorage, wiring this cuts background provider
    * calls by ~99% in the common case.
+   *
+   * If both `tokenExpiryProvider` and `oauthConnector` are set,
+   * `tokenExpiryProvider` wins — callers can override the default
+   * adapter for testing or non-OAuth providers.
    */
   tokenExpiryProvider?: TokenExpiryProvider;
+  /**
+   * Optional: An OAuthConnector that owns the secure storage used by
+   * every provider adapter. When supplied (and `tokenExpiryProvider`
+   * is not), the bootstrap builds a default `tokenExpiryProvider` that
+   * reads absolute expiry metadata from the stored token records. This
+   * is the production wiring path for Security Review 2026-05-02
+   * Finding L6 — passing an `oauthConnector` here is the single-line
+   * wiring a production entry point needs.
+   */
+  oauthConnector?: OAuthConnector;
   /**
    * Optional: HTTP client for the subscription backend. When omitted, a
    * placeholder is used that rejects any call — this prevents silent
@@ -285,7 +300,9 @@ export async function bootstrapApp(config: AppBootstrapConfig): Promise<AppConte
   // the probe result is cached for 5 minutes so repeated polls don't
   // amplify provider rate-limit pressure.
   const { TokenHealthMonitor } = await import('../providers/tokenHealthMonitor');
-  const { createCachedTokenHealthChecker } = await import('../providers/cachedTokenHealth');
+  const { createCachedTokenHealthChecker, createOAuthTokenExpiryProvider } = await import(
+    '../providers/cachedTokenHealth'
+  );
   const rawHealthProbe = async (accountId: string) => {
     const adapter = providerAdapters.get(accountId);
     if (!adapter) return 'unknown' as const;
@@ -296,9 +313,16 @@ export async function bootstrapApp(config: AppBootstrapConfig): Promise<AppConte
       return 'revoked' as const;
     }
   };
+  // Resolve the expiry provider — explicit wins, then auto-built from
+  // the OAuthConnector, then `undefined` (5-minute probe cache only).
+  const resolvedExpiryProvider: TokenExpiryProvider | undefined =
+    config.tokenExpiryProvider ??
+    (config.oauthConnector
+      ? createOAuthTokenExpiryProvider(config.oauthConnector)
+      : undefined);
   const cachedHealthChecker = createCachedTokenHealthChecker({
     rawChecker: rawHealthProbe,
-    tokenExpiryProvider: config.tokenExpiryProvider,
+    tokenExpiryProvider: resolvedExpiryProvider,
   });
   const tokenHealthMonitor = new TokenHealthMonitor({
     checkHealth: cachedHealthChecker,
