@@ -19,7 +19,7 @@ import { Appearance, type ColorSchemeName, type EmitterSubscription } from 'reac
 import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
-import { devtools } from 'zustand/middleware';
+import { devtools } from './devtoolsAdapter';
 import { useShallow } from 'zustand/react/shallow';
 import type { StateStorage } from 'zustand/middleware';
 

@@ -7,7 +7,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
-import { devtools } from 'zustand/middleware';
+import { devtools } from './devtoolsAdapter';
 import { useShallow } from 'zustand/react/shallow';
 import type { CalendarEvent } from '../types/models';
 import type { StateStorage } from 'zustand/middleware';

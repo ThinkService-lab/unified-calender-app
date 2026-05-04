@@ -6,7 +6,7 @@
 
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { devtools } from 'zustand/middleware';
+import { devtools } from '../stores/devtoolsAdapter';
 import { useShallow } from 'zustand/react/shallow';
 import type {
   NotificationCategory,

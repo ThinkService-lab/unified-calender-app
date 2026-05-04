@@ -16,7 +16,7 @@ module.exports = function (api) {
   plugins.push('react-native-reanimated/plugin');
 
   return {
-    presets: ['babel-preset-expo'],
+    presets: [['babel-preset-expo', { unstable_transformImportMeta: true }]],
     plugins,
   };
 };
