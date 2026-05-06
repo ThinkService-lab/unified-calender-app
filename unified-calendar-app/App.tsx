@@ -1,332 +1,291 @@
 /**
- * Main App entry point - renders the Unified Calendar View with sample data
- * for demonstration and E2E testing purposes.
+ * Production App entry point.
  *
- * Onboarding integration (Req 20.1, 20.7):
- * - On first launch, shows the OnboardingAnimator as a full-screen overlay.
- * - Uses OnboardingManager.isComplete(userId) as the single source of truth
- *   for whether onboarding has been completed or skipped.
- * - Does NOT store onboarding state in UIPreferences to avoid duplicated state.
+ * Responsibilities:
+ *   1. Retrieve or generate the persistent userId and deviceId from SecureStore.
+ *   2. Open the platform SQLite driver and run forward-only migrations.
+ *   3. Wire the real AppState listener, platform notification handler, and
+ *      subscription HTTP client, then call bootstrapApp.
+ *   4. Show the onboarding flow on first launch; show the calendar shell once
+ *      onboarding is complete.
+ *
+ * All domain services (SyncEngine, ConflictDetector, SubscriptionManager, …)
+ * are constructed inside bootstrapApp. This file owns only the platform wiring.
+ *
+ * Requirements: 6.1, 13.1, 15.1, 20.1, 20.7
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { StyleSheet, View, Text, SafeAreaView, Platform } from 'react-native';
+import {
+  StyleSheet,
+  View,
+  Text,
+  SafeAreaView,
+  Platform,
+  AppState as RNAppState,
+  ActivityIndicator,
+} from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
+import * as SecureStore from 'expo-secure-store';
+import * as Notifications from 'expo-notifications';
+import * as Crypto from 'expo-crypto';
+
 import { UnifiedCalendarView } from './src/ui/calendar/UnifiedCalendarView';
 import OnboardingAnimator from './src/ui/onboarding/OnboardingAnimator';
-import { createOnboardingManager } from './src/onboarding/onboardingManager';
+import { LoginScreen } from './src/ui/auth/LoginScreen';
+import { bootstrapApp } from './src/bootstrap/appBootstrap';
+import type { AppContext } from './src/bootstrap/appBootstrap';
 import type { OnboardingManager } from './src/onboarding/onboardingManager';
-import type { DatabaseDriver } from './src/db/database';
-import type { CalendarEvent, CalendarAccount } from './src/types/models';
+import type { AppStateListener } from './src/lifecycle/appLifecycleManager';
+import { createSubscriptionHttpClient } from './src/subscription/subscriptionHttpClient';
+import { createIOSNotificationHandler } from './src/notifications/notificationHandler.ios';
+import { createAndroidNotificationHandler } from './src/notifications/notificationHandler.android';
+import { createWebNotificationHandler } from './src/notifications/notificationHandler.web';
+import type { PlatformNotificationHandler } from './src/notifications/types';
 
-/** The demo user ID used throughout the sample app. */
-const DEMO_USER_ID = 'user-1';
+// ── Secure-stored keys ────────────────────────────────────────────────────────
 
-// Sample accounts for demonstration
-const SAMPLE_ACCOUNTS: CalendarAccount[] = [
-  {
-    id: 'acc-1',
-    userId: 'user-1',
-    providerId: 'google',
-    displayName: 'Work Calendar',
-    email: 'user@company.com',
-    color: '#4285F4',
-    visibility: 'public',
-    syncToken: null,
-    lastSyncedAt: new Date(),
-    status: 'active',
-    createdAt: new Date(),
-  },
-  {
-    id: 'acc-2',
-    userId: 'user-1',
-    providerId: 'outlook',
-    displayName: 'Personal Calendar',
-    email: 'user@personal.com',
-    color: '#34A853',
-    visibility: 'public',
-    syncToken: null,
-    lastSyncedAt: new Date(),
-    status: 'active',
-    createdAt: new Date(),
-  },
-  {
-    id: 'acc-3',
-    userId: 'user-1',
-    providerId: 'icloud',
-    displayName: 'Family Calendar',
-    email: 'user@icloud.com',
-    color: '#EA4335',
-    visibility: 'public',
-    syncToken: null,
-    lastSyncedAt: new Date(),
-    status: 'active',
-    createdAt: new Date(),
-  },
-];
+const SECURE_KEY_USER_ID = 'app_user_id';
+const SECURE_KEY_DEVICE_ID = 'app_device_id';
 
-// Generate sample events for the current week
-function generateSampleEvents(): CalendarEvent[] {
-  const today = new Date();
-  const events: CalendarEvent[] = [];
+// ── SecureStore helpers (web falls back to a memory map) ─────────────────────
 
-  const baseEvent = {
-    providerEventId: '',
-    description: null,
-    location: null,
-    timeZone: 'UTC',
-    isAllDay: false,
-    recurrenceRule: null,
-    recurrenceExceptionDate: null,
-    parentRecurringEventId: null,
-    organizer: null,
-    attendees: [],
-    sequence: 0,
-    dtstamp: new Date(),
-    status: 'confirmed' as const,
-    visibility: null,
-    opaqueFields: new Map<string, string>(),
-    syncStatus: 'synced' as const,
-    localVersion: 1,
-    remoteEtag: null,
-    modifiedBy: null,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
-
-  // Today's events
-  const todayStart = new Date(today);
-  todayStart.setHours(9, 0, 0, 0);
-
-  events.push({
-    ...baseEvent,
-    id: 'evt-1',
-    providerEventId: 'prov-1',
-    calendarAccountId: 'acc-1',
-    title: 'Team Standup',
-    description: 'Daily sync with the engineering team',
-    location: 'Conference Room A',
-    startTime: new Date(todayStart),
-    endTime: new Date(todayStart.getTime() + 30 * 60 * 1000),
-  });
-
-  events.push({
-    ...baseEvent,
-    id: 'evt-2',
-    providerEventId: 'prov-2',
-    calendarAccountId: 'acc-1',
-    title: 'Sprint Planning',
-    description: 'Plan next sprint tasks and priorities',
-    startTime: new Date(todayStart.getTime() + 2 * 60 * 60 * 1000),
-    endTime: new Date(todayStart.getTime() + 3 * 60 * 60 * 1000),
-  });
-
-  events.push({
-    ...baseEvent,
-    id: 'evt-3',
-    providerEventId: 'prov-3',
-    calendarAccountId: 'acc-2',
-    title: 'Lunch with Alex',
-    location: 'Downtown Cafe',
-    startTime: new Date(todayStart.getTime() + 3.5 * 60 * 60 * 1000),
-    endTime: new Date(todayStart.getTime() + 4.5 * 60 * 60 * 1000),
-  });
-
-  events.push({
-    ...baseEvent,
-    id: 'evt-4',
-    providerEventId: 'prov-4',
-    calendarAccountId: 'acc-1',
-    title: 'Code Review Session',
-    description: 'Review PR #1234 - Calendar sync engine',
-    startTime: new Date(todayStart.getTime() + 5 * 60 * 60 * 1000),
-    endTime: new Date(todayStart.getTime() + 6 * 60 * 60 * 1000),
-  });
-
-  events.push({
-    ...baseEvent,
-    id: 'evt-5',
-    providerEventId: 'prov-5',
-    calendarAccountId: 'acc-3',
-    title: 'Family Dinner',
-    location: 'Home',
-    startTime: new Date(todayStart.getTime() + 9 * 60 * 60 * 1000),
-    endTime: new Date(todayStart.getTime() + 10.5 * 60 * 60 * 1000),
-  });
-
-  // Tomorrow's events
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(10, 0, 0, 0);
-
-  events.push({
-    ...baseEvent,
-    id: 'evt-6',
-    providerEventId: 'prov-6',
-    calendarAccountId: 'acc-1',
-    title: '1:1 with Manager',
-    description: 'Weekly check-in',
-    startTime: new Date(tomorrow),
-    endTime: new Date(tomorrow.getTime() + 45 * 60 * 1000),
-  });
-
-  events.push({
-    ...baseEvent,
-    id: 'evt-7',
-    providerEventId: 'prov-7',
-    calendarAccountId: 'acc-2',
-    title: 'Dentist Appointment',
-    location: 'City Dental Clinic',
-    startTime: new Date(tomorrow.getTime() + 4 * 60 * 60 * 1000),
-    endTime: new Date(tomorrow.getTime() + 5 * 60 * 60 * 1000),
-  });
-
-  // Day after tomorrow - overlapping events
-  const dayAfter = new Date(today);
-  dayAfter.setDate(dayAfter.getDate() + 2);
-  dayAfter.setHours(14, 0, 0, 0);
-
-  events.push({
-    ...baseEvent,
-    id: 'evt-8',
-    providerEventId: 'prov-8',
-    calendarAccountId: 'acc-1',
-    title: 'Design Review',
-    description: 'Review new calendar UI mockups',
-    startTime: new Date(dayAfter),
-    endTime: new Date(dayAfter.getTime() + 60 * 60 * 1000),
-  });
-
-  events.push({
-    ...baseEvent,
-    id: 'evt-9',
-    providerEventId: 'prov-9',
-    calendarAccountId: 'acc-2',
-    title: 'Yoga Class',
-    location: 'Fitness Center',
-    startTime: new Date(dayAfter.getTime() + 30 * 60 * 1000),
-    endTime: new Date(dayAfter.getTime() + 90 * 60 * 1000),
-  });
-
-  // All-day event
-  const nextWeek = new Date(today);
-  nextWeek.setDate(nextWeek.getDate() + 5);
-  nextWeek.setHours(0, 0, 0, 0);
-
-  events.push({
-    ...baseEvent,
-    id: 'evt-10',
-    providerEventId: 'prov-10',
-    calendarAccountId: 'acc-3',
-    title: 'Family Vacation',
-    isAllDay: true,
-    startTime: new Date(nextWeek),
-    endTime: new Date(nextWeek.getTime() + 3 * 24 * 60 * 60 * 1000),
-  });
-
-  return events;
+async function getOrCreate(key: string): Promise<string> {
+  if (Platform.OS === 'web') {
+    return webMemoryStore[key] ?? (webMemoryStore[key] = Crypto.randomUUID());
+  }
+  const existing = await SecureStore.getItemAsync(key);
+  if (existing) return existing;
+  const newValue = Crypto.randomUUID();
+  await SecureStore.setItemAsync(key, newValue);
+  return newValue;
 }
 
-/**
- * Creates a lightweight in-memory database driver for the demo app.
- * In production, this would be replaced by the platform-specific SQLite driver
- * initialized during the full app bootstrap.
- */
-function createInMemoryDb(): DatabaseDriver {
-  const tables = new Map<string, Array<Record<string, unknown>>>();
+// Minimal in-memory fallback for web (SecureStore is iOS/Android only).
+const webMemoryStore: Record<string, string> = {};
 
+// ── AppStateListener backed by react-native AppState ─────────────────────────
+
+function buildAppStateListener(): AppStateListener {
   return {
-    async execute(sql: string, params?: unknown[]): Promise<void> {
-      // Minimal in-memory implementation for onboarding_state table
-      if (sql.includes('CREATE TABLE') || sql.includes('PRAGMA')) return;
-
-      if (sql.includes('INSERT INTO onboarding_state')) {
-        const rows = tables.get('onboarding_state') ?? [];
-        rows.push({
-          user_id: params?.[0],
-          current_step: params?.[1],
-          completed_steps: params?.[2],
-          skipped: params?.[3],
-          first_opened_at: params?.[4],
-          tooltips_dismissed: params?.[5],
-        });
-        tables.set('onboarding_state', rows);
-        return;
-      }
-
-      if (sql.includes('UPDATE onboarding_state')) {
-        const rows = tables.get('onboarding_state') ?? [];
-        const userId = params?.[5];
-        const idx = rows.findIndex((r) => r.user_id === userId);
-        if (idx >= 0) {
-          rows[idx] = {
-            user_id: userId,
-            current_step: params?.[0],
-            completed_steps: params?.[1],
-            skipped: params?.[2],
-            first_opened_at: params?.[3],
-            tooltips_dismissed: params?.[4],
-          };
-        }
-        return;
-      }
+    addEventListener(callback) {
+      const subscription = RNAppState.addEventListener('change', callback);
+      return () => subscription.remove();
     },
-
-    async query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
-      if (sql.includes('FROM onboarding_state')) {
-        const rows = tables.get('onboarding_state') ?? [];
-        const userId = params?.[0];
-        const matches = rows.filter((r) => r.user_id === userId);
-        return matches as T[];
-      }
-      return [];
-    },
-
-    async close(): Promise<void> {},
-    isOpen(): boolean { return true; },
-    // Security Review 2026-05-02: Finding H8 — DatabaseDriver now requires
-    // transaction support. The demo in-memory driver has no real atomicity,
-    // so transaction() simply invokes the callback directly. Marked
-    // supportsTransactions = false so any production code that depends on
-    // atomicity can choose to fall back.
-    supportsTransactions: false,
-    async transaction<T>(fn: (tx: { execute: (sql: string, params?: unknown[]) => Promise<void>; query: <R = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<R[]> }) => Promise<T>): Promise<T> {
-      // eslint-disable-next-line @typescript-eslint/no-use-before-define
-      return fn({ execute: this.execute.bind(this), query: this.query.bind(this) });
+    currentState() {
+      const state = RNAppState.currentState;
+      // AppLifecycleState only has 'active' | 'background' | 'inactive'
+      if (state === 'active') return 'active';
+      if (state === 'background') return 'background';
+      return 'inactive';
     },
   };
 }
+
+// ── Platform notification handler factory ────────────────────────────────────
+
+function buildNotificationHandler(): PlatformNotificationHandler {
+  if (Platform.OS === 'ios') {
+    return createIOSNotificationHandler({
+      requestPermissions: () =>
+        Notifications.requestPermissionsAsync().then((r) => ({ status: r.status })),
+      getPermissionStatus: () =>
+        Notifications.getPermissionsAsync().then((r) => ({ status: r.status })),
+      getDevicePushToken: () =>
+        Notifications.getDevicePushTokenAsync().then((t) => ({ data: t.data as string })),
+      scheduleNotification: (content) =>
+        Notifications.scheduleNotificationAsync({
+          content: { title: content.title, body: content.body, data: content.data },
+          trigger: content.trigger ? { type: Notifications.SchedulableTriggerInputTypes.DATE, date: content.trigger.date } : null,
+        }),
+      setNotificationHandler: Notifications.setNotificationHandler,
+      addNotificationReceivedListener: Notifications.addNotificationReceivedListener,
+    });
+  }
+
+  if (Platform.OS === 'android') {
+    return createAndroidNotificationHandler({
+      requestPermissions: () =>
+        Notifications.requestPermissionsAsync().then((r) => ({ status: r.status })),
+      getPermissionStatus: () =>
+        Notifications.getPermissionsAsync().then((r) => ({ status: r.status })),
+      getDevicePushToken: () =>
+        Notifications.getDevicePushTokenAsync().then((t) => ({ data: t.data as string })),
+      scheduleNotification: (content) =>
+        Notifications.scheduleNotificationAsync({
+          content: {
+            title: content.title,
+            body: content.body,
+            data: content.data,
+            ...(content.channelId ? { android: { channelId: content.channelId } } : {}),
+          },
+          trigger: content.trigger ? { type: Notifications.SchedulableTriggerInputTypes.DATE, date: content.trigger.date } : null,
+        }),
+      setNotificationHandler: Notifications.setNotificationHandler,
+      addNotificationReceivedListener: Notifications.addNotificationReceivedListener,
+    });
+  }
+
+  // Web — uses browser Notification API
+  return createWebNotificationHandler({
+    requestPermission: () => Notification.requestPermission(),
+    getPermission: () => Notification.permission,
+    getServiceWorkerRegistration: () =>
+      'serviceWorker' in navigator
+        ? navigator.serviceWorker.ready.then((r) => r).catch(() => null)
+        : Promise.resolve(null),
+    showNotification: (title, options) => {
+      if (Notification.permission === 'granted') {
+        new Notification(title, options);
+      }
+    },
+  });
+}
+
+// ── Bootstrap state ───────────────────────────────────────────────────────────
+
+type BootstrapPhase =
+  | { phase: 'loading' }
+  | { phase: 'login' }
+  | { phase: 'error'; message: string }
+  | { phase: 'ready'; context: AppContext; userId: string };
+
+// ── App component ─────────────────────────────────────────────────────────────
 
 export default function App() {
-  const events = React.useMemo(() => generateSampleEvents(), []);
-
-  // Onboarding state — null means "still loading", true/false once resolved
+  const [bootstrap, setBootstrap] = useState<BootstrapPhase>({ phase: 'loading' });
   const [showOnboarding, setShowOnboarding] = useState<boolean | null>(null);
   const onboardingManagerRef = useRef<OnboardingManager | null>(null);
 
-  // Initialize OnboardingManager and check completion state on mount
-  useEffect(() => {
-    const db = createInMemoryDb();
-    const manager = createOnboardingManager({ db });
-    onboardingManagerRef.current = manager;
+  const runBootstrap = useCallback(async (userId: string, cancelled: { value: boolean }) => {
+    try {
+      const deviceId = await getOrCreate(SECURE_KEY_DEVICE_ID);
 
-    manager.isComplete(DEMO_USER_ID).then((complete) => {
+      const { createDatabaseDriver } = await import('@/db/db');
+      const db = await Promise.resolve(
+        createDatabaseDriver({ name: 'unified_calendar.db' })
+      );
+
+      const { MigrationRunner } = await import('@/db/migration');
+      const runner = new MigrationRunner(db);
+      await runner.run();
+
+      const platformNotificationHandler = buildNotificationHandler();
+      const appStateListener = buildAppStateListener();
+
+      const subscriptionApiUrl = process.env.EXPO_PUBLIC_SUBSCRIPTION_API_URL;
+      const subscriptionHttpClient = subscriptionApiUrl
+        ? createSubscriptionHttpClient({ baseUrl: subscriptionApiUrl })
+        : undefined;
+
+      const wsUrl =
+        process.env.EXPO_PUBLIC_WS_URL ?? 'wss://sync.unifiedcalendar.app/ws';
+
+      const context = await bootstrapApp({
+        db,
+        userId,
+        deviceId,
+        webSocketUrl: wsUrl,
+        platformNotificationHandler,
+        appStateListener,
+        subscriptionHttpClient,
+      });
+
+      if (cancelled.value) return;
+
+      onboardingManagerRef.current = context.onboardingManager;
+      const complete = await context.onboardingManager.isComplete(userId);
+
+      setBootstrap({ phase: 'ready', context, userId });
       setShowOnboarding(!complete);
-    }).catch(() => {
-      // If we can't determine onboarding state, skip to main view
-      setShowOnboarding(false);
-    });
+    } catch (err) {
+      if (!cancelled.value) {
+        const message = err instanceof Error ? err.message : 'Startup failed';
+        setBootstrap({ phase: 'error', message });
+      }
+    }
   }, []);
 
-  // Callback when onboarding completes or is skipped — dismiss the overlay
+  const handleAppleSignedIn = useCallback((userId: string) => {
+    // Persist the Apple sub-identifier so future launches skip the login screen
+    SecureStore.setItemAsync(SECURE_KEY_USER_ID, userId).catch(() => {});
+    setBootstrap({ phase: 'loading' });
+    const cancelled = { value: false };
+    runBootstrap(userId, cancelled);
+  }, [runBootstrap]);
+
+  useEffect(() => {
+    let cancelled = { value: false };
+
+    async function init() {
+      try {
+        // On iOS first launch, if no userId is stored yet, show the login screen
+        // so the user can Sign in with Apple (required by App Store Guideline 4.8).
+        // Android/web use a device-generated UUID and skip the login screen.
+        const existingUserId = Platform.OS === 'ios'
+          ? await SecureStore.getItemAsync(SECURE_KEY_USER_ID)
+          : null;
+
+        if (Platform.OS === 'ios' && !existingUserId) {
+          if (!cancelled.value) setBootstrap({ phase: 'login' });
+          return;
+        }
+
+        const userId = existingUserId ?? await getOrCreate(SECURE_KEY_USER_ID);
+        await runBootstrap(userId, cancelled);
+      } catch (err) {
+        if (!cancelled.value) {
+          const message = err instanceof Error ? err.message : 'Startup failed';
+          setBootstrap({ phase: 'error', message });
+        }
+      }
+    }
+
+    init();
+    return () => { cancelled.value = true; };
+  }, [runBootstrap]);
+
   const handleOnboardingComplete = useCallback(() => {
     setShowOnboarding(false);
   }, []);
 
-  // While loading onboarding state, render the main app shell without the overlay
-  // to avoid a flash of empty content
-  const isLoading = showOnboarding === null;
+  // ── Loading state ──────────────────────────────────────────────────────────
+  if (bootstrap.phase === 'loading') {
+    return (
+      <GestureHandlerRootView style={styles.gestureRoot}>
+        <SafeAreaView style={[styles.safeArea, styles.centered]}>
+          <ActivityIndicator size="large" color="#1F4E79" />
+          <Text style={styles.loadingText}>Starting up…</Text>
+        </SafeAreaView>
+      </GestureHandlerRootView>
+    );
+  }
+
+  // ── Login state (iOS first launch — Sign in with Apple required) ───────────
+  if (bootstrap.phase === 'login') {
+    return (
+      <GestureHandlerRootView style={styles.gestureRoot}>
+        <LoginScreen onSignedIn={handleAppleSignedIn} />
+      </GestureHandlerRootView>
+    );
+  }
+
+  // ── Error state ────────────────────────────────────────────────────────────
+  if (bootstrap.phase === 'error') {
+    return (
+      <GestureHandlerRootView style={styles.gestureRoot}>
+        <SafeAreaView style={[styles.safeArea, styles.centered]}>
+          <Text style={styles.errorTitle}>Unable to start</Text>
+          <Text style={styles.errorMessage}>{bootstrap.message}</Text>
+        </SafeAreaView>
+      </GestureHandlerRootView>
+    );
+  }
+
+  // ── Ready state ────────────────────────────────────────────────────────────
+  const { context, userId } = bootstrap;
+  const isOnboardingLoading = showOnboarding === null;
 
   return (
     <GestureHandlerRootView style={styles.gestureRoot}>
@@ -338,19 +297,18 @@ export default function App() {
           </View>
           <View style={styles.calendarContainer}>
             <UnifiedCalendarView
-              events={events}
-              accounts={SAMPLE_ACCOUNTS}
+              events={[]}
+              accounts={[]}
               initialViewMode="week"
             />
           </View>
         </View>
-        {/* Onboarding overlay — renders on top of the main calendar content */}
-        {!isLoading && showOnboarding && onboardingManagerRef.current && (
+        {!isOnboardingLoading && showOnboarding && onboardingManagerRef.current && (
           <View style={styles.onboardingOverlay} testID="onboarding-overlay">
             <OnboardingAnimator
               onComplete={handleOnboardingComplete}
               onboardingManager={onboardingManagerRef.current}
-              userId={DEMO_USER_ID}
+              userId={userId}
             />
           </View>
         )}
@@ -367,6 +325,10 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#F8F9FA',
+  },
+  centered: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   container: {
     flex: 1,
@@ -395,5 +357,22 @@ const styles = StyleSheet.create({
   onboardingOverlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 10,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#5F6368',
+  },
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#D93025',
+    marginBottom: 8,
+  },
+  errorMessage: {
+    fontSize: 14,
+    color: '#5F6368',
+    textAlign: 'center',
+    paddingHorizontal: 32,
   },
 });

@@ -36,6 +36,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import type { TokenExpiryProvider } from '../providers/cachedTokenHealth';
 import type { OAuthConnector } from '../providers/oauthConnector';
 import type { SubscriptionHttpClient } from '../subscription/subscriptionHttpClient';
+import type { AppStateListener } from '../lifecycle/appLifecycleManager';
 
 // ── Configuration ──────────────────────────────────────────────────────
 
@@ -50,6 +51,13 @@ export interface AppBootstrapConfig {
   webSocketUrl: string;
   /** Platform notification handler (iOS/Android/Web) */
   platformNotificationHandler: PlatformNotificationHandler;
+  /**
+   * Platform AppState listener for lifecycle transitions (foreground/background).
+   * In production this is backed by react-native's AppState. When omitted a
+   * no-op listener is used — the app will not respond to background transitions.
+   * HIGH-3: wire real AppState here via the App entry point.
+   */
+  appStateListener?: AppStateListener;
   /** Optional: WebSocket factory for testing */
   createWebSocket?: (url: string) => WebSocket;
   /** Optional: Pre-configured provider adapters (for testing or pre-connected accounts) */
@@ -382,12 +390,8 @@ export async function bootstrapApp(config: AppBootstrapConfig): Promise<AppConte
     syncEngine,
     webSocketManager,
     db,
-    appStateListener: {
-      addEventListener: (_handler) => {
-        // In production, this would use AppState from react-native.
-        // Returns an unsubscribe function.
-        return () => {};
-      },
+    appStateListener: config.appStateListener ?? {
+      addEventListener: (_handler) => () => {},
       currentState: () => 'active' as const,
     },
   });
